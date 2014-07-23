@@ -2887,20 +2887,20 @@ config () {
      B) devfsrules="NO"; flag_count=$(( $flag_count + 1 ));;
      k) rawsockets="YES"; flag_count=$(( $flag_count + 1 ));;
      K) rawsockets="NO"; flag_count=$(( $flag_count + 1 ));;
-     l) nullfs="YES"; flag_count=$(( $flag_count + 1 ));;
-     L) nullfs="NO"; flag_count=$(( $flag_count + 1 ));;
+     l) mount_nullfs="YES"; flag_count=$(( $flag_count + 1 ));;
+     L) mount_nullfs="NO"; flag_count=$(( $flag_count + 1 ));;
      m) man_start="YES"; flag_count=$(( $flag_count + 1 ));;
      M) man_start="NO"; flag_count=$(( $flag_count + 1 ));;
      q) quota="YES"; flag_count=$(( $flag_count + 1 ));;
      Q) quota="NO"; flag_count=$(( $flag_count + 1 ));;
      r) norun="YES"; flag_count=$(( $flag_count + 1 ));;
      R) norun="NO"; flag_count=$(( $flag_count + 1 ));;
-     t) tmpfs="YES"; flag_count=$(( $flag_count + 1 ));;
-     T) tmpfs="NO"; flag_count=$(( $flag_count + 1 ));;
+     t) mount_tmpfs="YES"; flag_count=$(( $flag_count + 1 ));;
+     T) mount_tmpfs="NO"; flag_count=$(( $flag_count + 1 ));;
      v) vvnet="YES"; flag_count=$(( $flag_count + 1 ));;
      V) vvnet="NO"; flag_count=$(( $flag_count + 1 ));;
-     x) zfs="YES"; flag_count=$(( $flag_count + 1 ));;
-     X) zfs="NO"; flag_count=$(( $flag_count + 1 ));;
+     x) mount_zfs="YES"; flag_count=$(( $flag_count + 1 ));;
+     X) mount_zfs="NO"; flag_count=$(( $flag_count + 1 ));;
      y) sysv="YES"; flag_count=$(( $flag_count + 1 ));;
      Y) sysv="NO"; flag_count=$(( $flag_count + 1 ));;
      ?) kill "${syntax_config}";;
@@ -3537,42 +3537,42 @@ config () {
       continue   
     fi          
                 
-    if [ "${nullfs}" = "YES" ]; then
+    if [ "${mount_nullfs}" = "YES" ]; then
       allow_mount_nullfs="allow.mount.nullfs"
       write-definition "${deffile}"
       post_msg "Successfully enabled allow.mount.nullfs for ${jailname}"
       continue     
     fi           
                    
-    if [ "${nullfs}" = "NO" ]; then
+    if [ "${mount_nullfs}" = "NO" ]; then
       unset allow_mount_nullfs
       write-definition "${deffile}"
       post_msg "Successfully disabled allow.mount.nullfs for ${jailname}"
       continue
     fi           
                   
-    if [ "${zfs}" = "YES" ]; then
+    if [ "${mount_zfs}" = "YES" ]; then
       allow_mount_zfs="allow.mount.zfs"
       write-definition "${deffile}"
       post_msg "Successfully enabled allow.mount.zfs for ${jailname}"
       continue
     fi           
            
-    if [ "${zfs}" = "NO" ]; then
+    if [ "${mount_zfs}" = "NO" ]; then
       unset allow_mount_zfs
       write-definition "${deffile}"
       post_msg "Successfully disabled allow.mount.zfs for ${jailname}"
       continue
     fi           
 
-    if [ "${tmpfs}" = "YES" ]; then
+    if [ "${mount_tmpfs}" = "YES" ]; then
       allow_mount_tmpfs="allow.mount.tmpfs"
       write-definition "${deffile}"
       post_msg "Successfully enabled allow.mount.tmpfs for ${jailname}"
       continue
     fi           
            
-    if [ "${tmpfs}" = "NO" ]; then
+    if [ "${mount_tmpfs}" = "NO" ]; then
       unset allow_mount_tmpfs
       write-definition "${deffile}"
       post_msg "Successfully disabled allow.mount.tmpfs for ${jailname}"
