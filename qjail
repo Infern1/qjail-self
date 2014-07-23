@@ -346,6 +346,7 @@ passed_deffile=$1
   echo "quotas=\"${allow_quotas}\""
   echo "nullfs=\"${allow_mount_nullfs}\""
   echo "zfs=\"${allow_mount_zfs}\""
+  echo "tmpfs=\"${allow_mount_tmpfs}\""
   echo "poststartssh=\"${poststart_ssh}\""
               
 # These statements do not exist in the jail environment. 
@@ -384,7 +385,7 @@ read-definition () {
   unset jailname ip4 ip6 rootdir
   unset nic_devicename fstab securelevel cpuset_id
   unset exec_fib vnet vnet_interface allow_raw_sockets
-  unset allow_quotas allow_mount_nullfs allow_mount_zfs
+  unset allow_quotas allow_mount_nullfs allow_mount_zfs allow_mount_tmpfs
   unset allow_sysvipc devfs_ruleset_number
   unset devicelink device device_md_number
   unset deffile poststart_ssh  
@@ -418,6 +419,7 @@ read-definition () {
   eval allow_quotas=\"\${quotas}\"
   eval allow_mount_nullfs=\"\${nullfs}\"
   eval allow_mount_zfs=\"\${zfs}\"
+  eval allow_mount_tmpfs=\"\${tmpfs}\"
   eval poststart_ssh=\"\${poststartssh}\"
   eval deffile=\"\${deffile}\"
   eval image=\"\${image}\"
@@ -505,6 +507,12 @@ build_config_def () {
       echo "allow.mount.zfs;"
     fi       
              
+    if [ ${allow_mount_tmpfs} ]; then
+      echo "enforce_statfs      =  \"1\";"
+      echo "allow.mount;"
+      echo "allow.mount.tmpfs;"
+    fi       
+
     if [ ${vnet} ]; then 
       # ${vnet} is loaded with ipfw, ipfilter, pf, or none for firewall
       # selection, which is followed by [ng] or [be] for network configuration
@@ -2861,7 +2869,7 @@ config () {
        
   flag_count=0
         
-  shift; while getopts b:c:f:4:6:n:p:s:w:z:AdhBkKlLmMqQrRvVxXyY arg; \
+  shift; while getopts b:c:f:4:6:n:p:s:w:z:AdhBkKlLmMqQrRtTvVxXyY arg; \
    do case ${arg} in
      b) devfsrules=${OPTARG}; flag_count=$(( $flag_count + 1 ));;
      c) new_nic=${OPTARG}; flag_count=$(( $flag_count + 1 ));;
@@ -2887,6 +2895,8 @@ config () {
      Q) quota="NO"; flag_count=$(( $flag_count + 1 ));;
      r) norun="YES"; flag_count=$(( $flag_count + 1 ));;
      R) norun="NO"; flag_count=$(( $flag_count + 1 ));;
+     t) tmpfs="YES"; flag_count=$(( $flag_count + 1 ));;
+     T) tmpfs="NO"; flag_count=$(( $flag_count + 1 ));;
      v) vvnet="YES"; flag_count=$(( $flag_count + 1 ));;
      V) vvnet="NO"; flag_count=$(( $flag_count + 1 ));;
      x) zfs="YES"; flag_count=$(( $flag_count + 1 ));;
@@ -3142,7 +3152,7 @@ config () {
   fi         
          
   #jjbf1# Start of group prefix processing for options
-  # -a -c -f -i -l -b -B -L -m -M -p -q -Q -r -R -s -v -V -x -X -w -W -y -Y
+  # -a -c -f -i -l -b -B -L -m -M -p -q -Q -r -R -s -t -T -v -V -x -X -w -W -y -Y
   #      
          
   # Save the command line list of jailnames if any
@@ -3552,6 +3562,20 @@ config () {
       unset allow_mount_zfs
       write-definition "${deffile}"
       post_msg "Successfully disabled allow.mount.zfs for ${jailname}"
+      continue
+    fi           
+
+    if [ "${tmpfs}" = "YES" ]; then
+      allow_mount_tmpfs="allow.mount.tmpfs"
+      write-definition "${deffile}"
+      post_msg "Successfully enabled allow.mount.tmpfs for ${jailname}"
+      continue
+    fi           
+           
+    if [ "${tmpfs}" = "NO" ]; then
+      unset allow_mount_tmpfs
+      write-definition "${deffile}"
+      post_msg "Successfully disabled allow.mount.tmpfs for ${jailname}"
       continue
     fi           
                    

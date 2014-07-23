@@ -47,8 +47,9 @@ qjail, to using the jail(8) jail.conf method which became available in
 9.1-RELEASE. This upgrade provides the ability to enable the following 
 new options on a per-jail basis. allow.raw_sockets, devfs_ruleset, 
 allow.sysvipc, allow.quotas, allow.mount.nullfs, allow.mount.zfs, 
-securelevel, cpuset.id, exec.fib, vnet.interface, and vnet. The vnet 
-option gives a jail its own network stack using the experimental vimage 
+allow.mount.tmpfs, securelevel, cpuset.id, exec.fib, vnet.interface, 
+and vnet. 
+The vnet option gives a jail its own network stack using the experimental vimage 
 software. This qjail version is only functional for 10.0-RELEASE and 
 newer. The vnet option has only been tested on i386 and amd64 equipment.
 .Pp
@@ -980,6 +981,10 @@ filesystem which makes it impossible to change file content or
 add files to those directories. This is by far a stronger
 form of jail security than the securelevel parameter can provide 
 on an per-jail basis.
+.It Fl t
+Lower case t enables the allow.mount.tmpfs per-jail option.
+.It Fl T
+Upper case T disables the allow.mount.tmpfs per-jail option.
 .It Fl v
 .hy 0
 Lower case v enables the vnet [vimage] per-jail option.            \
