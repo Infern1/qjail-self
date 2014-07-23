@@ -59,7 +59,7 @@ syntax_archive="Syntax: qjail archive [-z zone] [-A] [-s] [jailname...]"
 syntax_delete="Syntax: qjail delete  [-z zone] [-A] [jailname...]"
 syntax_restore="Syntax: qjail restore [-z zone] [-s] [jailname...]"
 syntax_config="Syntax: qjail config  [-z zone] [-c newnic] [-f value] [-b rule#] [-A -d -h]\n\
-                      [-B -k -K -l -L -m -M -q -Q -r -R -v -V -x -X -y -Y]\n\
+                      [-B -k -K -l -L -m -M -q -Q -r -R -t -T -v -V -x -X -y -Y]\n\
                       [-n newname] [-p value] [-s value] [-w value]\n\
                       [-4 newIPv4...] [-6 newIPv6...] jailname"
 syntax_update="Syntax: qjail update  [-z zone] [-b] [-p] [-l on|off]"
