@@ -1,0 +1,3707 @@
+#!/bin/sh
+#
+# qjail is a fork of ezjail version 3.1 that has this license.
+#
+# -------------------------------------------------------------
+# "THE BEER-WARE LICENSE":
+# <erdgeist@erdgeist.org> wrote ezjail. As long as you retain
+# this notice you can do whatever you want with this stuff.
+# If we meet some day, and you think this stuff is worth it,
+# you can buy me a beer in return Dirk Engling.
+# -------------------------------------------------------------
+#
+# Complete ezjail details can be found here;
+# http://erdgeist.org/arts/software/ezjail/
+#
+#
+# As per the international "Berne Convention" this work is
+# protected and all rights reserved.
+#
+# Before qjail may be forked, written permission must be
+# obtained from the author <qjail@a1poweruser.com>.
+#
+# This work is provided `AS IS' and you use it at your own risk.
+#
+# Redistribution and use is permitted providing this
+# license notice is retained.
+#
+ 
+################################
+# Start of variable initialization.
+#    
+examples="/usr/local/share/examples/qjail"
+jaildefs_vnet="/usr/local/etc/qjail.vnet"
+jaildefs="/usr/local/etc/qjail.local"
+jaildefs_global="/usr/local/etc/qjail.global"
+fstab="/usr/local/etc/qjail.fstab"
+jaildir="/usr/jails"
+template="${jaildir}/template"
+sharedfs="${jaildir}/sharedfs"
+download="${jaildir}/download"
+flavors_dir="${jaildir}/flavors"
+archive_dir="${jaildir}/archive"
+default_flavor="default"
+ftp_host="ftp2.freebsd.org"
+log="/var/log/qjail.log"
+                      
+# Syntax messages for command options.
+syntax_commands="qjail Version 3.5\n\
+Syntax: qjail [install|create|list|start|stop|restart|console|archive|\n\
+               delete|restore|config|update|logmsg|help] {parameters}"
+
+syntax_install="Syntax: qjail install [-z zone] [-h ftp host] [-f file location] [-l]"
+syntax_create="Syntax: qjail create  [-z zone] [-n value] [-a archive] [-f flavor] [-c]\n\
+                      [-i size] [-d duplicate#] [-4 IPv4...] [-6 IPv6...]\n\
+                      jailname"
+syntax_list="Syntax: qjail list    [-z zone] [jailname...]"
+syntax_console="Syntax: qjail console [-z zone] [-e] jailname"
+syntax_archive="Syntax: qjail archive [-z zone] [-A] [-s] [jailname...]"
+syntax_delete="Syntax: qjail delete  [-z zone] [-A] [jailname...]"
+syntax_restore="Syntax: qjail restore [-z zone] [-s] [jailname...]"
+syntax_config="Syntax: qjail config  [-z zone] [-c newnic] [-f value] [-b rule#] [-A -d -h]\n\
+                      [-B -k -K -l -L -m -M -q -Q -r -R -v -V -x -X -y -Y]\n\
+                      [-n newname] [-p value] [-s value] [-w value]\n\
+                      [-4 newIPv4...] [-6 newIPv6...] jailname"
+syntax_update="Syntax: qjail update  [-z zone] [-b] [-p] [-l on|off]"
+syntax_start="Syntax: qjail start   [-z zone] [jailname...]"
+syntax_stop="Syntax: qjail stop    [-z zone] [jailname...]"
+syntax_restart="Syntax: qjail restart [-z zone] [jailname...]"
+syntax_help="Syntax: qjail help    manual"
+syntax_logmsg="Syntax: qjail logmsg  [message text....]"
+         
+####### End of variable initialization. #######################
+                
+###############################################################
+#        
+# Start of function definitions. IE: subroutines
+#          
+       
+####### Verify ip4 address is not already used. #########
+verify_ip4 () {
+          
+  # This function will roll through all the definition records.
+  # With each read-definition the definition variables get
+  # refreshed with the values that describe that jail.
+  #       
+  # The definition variables for current jail are written out
+  # to save them before the following logic is executed, after
+  # which the original definition variables are put back in play.   
+  #        
+          
+  org_jailname="${jailname}"
+          
+  write-definition "${deffile}"
+               
+  # The create command can have more that a single IP address.
+  # Replace the , separating multiple ip addresses with a space
+  # so they can be indexed through.
+  entered_ip_list=`echo -n "${ip4}" | tr ',' ' '`
+               
+  # jaildefs_global has the definition records for all zones.
+  # Save the org jaildefs to restore later.
+  # This will cause read-definition to temporary use global for the
+  # duration of this function.
+          
+  saved_jaildefs="${jaildefs}"
+  jaildefs="${jaildefs_global}"
+          
+  # Build a list of all the jailnames known to qjail.
+  if [ -d "${jaildefs_global}" ]; then
+    cd "${jaildefs_global}"
+    global_jailname_list=`ls`
+  fi      
+          
+  # By this point the list is built and temporary conditions are set
+  # for processing to begin.
+          
+  # loop through the list of ip addresses from the input
+  for entered_ip in ${entered_ip_list}; do
+          
+    # Loop through the list of jail names from global definition directory.
+    for jailname in ${global_jailname_list}; do
+          
+      if [ "${org_jailname}" = "${jailname}" ]; then
+        continue
+      fi  
+             
+      read-definition "${jailname}" 
+              
+      # Existing jails may have multiple ip addresses so prep then for indexing
+      # Replace the , separating multiple ip addresses with a space.
+      #   
+      existing_jail_ip_list=`echo -n "${ip4}" | tr ',' ' '`
+          
+      for used_ip in ${existing_jail_ip_list}; do
+                 
+        if [ "${entered_ip}" = "${used_ip}" ]; then
+          post_msg "Warning: Existing jail ${jailname} is already assigned IP address ${entered_ip}"
+        fi
+      done
+    # Close the definition record.
+    write-definition "${jaildefs}/${jailname}"
+    done  
+  done    
+          
+  # Return things back to the way they were at start of the function.
+  jaildefs="${saved_jaildefs}"
+  jailname="${org_jailname}"
+  read-definition "${jailname}"
+  rm "${jaildefs}/${jailname}"
+  rm "${jaildefs_global}/${jailname}"
+           
+ ########### End of Verify IP4 address is not already used. #################
+}              
+          
+####### Verify ip6 address is not already used. #########
+verify_ip6 () {
+          
+  # This function will roll through all the definition records.
+  # With each read-definition the definition variables get
+  # refreshed with the values that describe that jail.
+  #       
+  # The definition variables for current jail are written out
+  # to save them before the following logic is executed, after
+  # which the original definition variables are put back in play.
+  #       
+          
+  org_jailname="${jailname}"
+          
+  write-definition "${deffile}"
+          
+  # The create command can have more that a single IP address.
+  # Replace the , separating multiple ip addresses with a space
+  # so they can be indexed through.
+  entered_ip_list=`echo -n "${ip6}" | tr ',' ' '`
+          
+  # jaildefs_global has the definition records for all zones.
+  # Save the org jaildefs to restore later.
+  # This will cause read-definition to temporary use global for the
+  # duration of this function.
+          
+  saved_jaildefs="${jaildefs}"
+  jaildefs="${jaildefs_global}"
+          
+  # Build a list of all the jailnames known to qjail.
+  if [ -d "${jaildefs_global}" ]; then
+    cd "${jaildefs_global}"
+    global_jailname_list=`ls`
+  fi      
+          
+  # By this point the list is built and temporary conditions are set
+  # for processing to begin.
+          
+  # loop through the list of ip addresses from the input
+  for entered_ip in ${entered_ip_list}; do
+          
+    # Loop through the list of jail names from global definition directory.
+    for jailname in ${global_jailname_list}; do
+          
+      if [ "${org_jailname}" = "${jailname}" ]; then
+        continue
+      fi  
+          
+      read-definition "${jailname}"
+          
+      # Existing jails may have multiple ip addresses so prep then for indexing
+      # Replace the , separating multiple ip addresses with a space.
+      #   
+      existing_jail_ip_list=`echo -n "${ip6}" | tr ',' ' '`
+          
+      for used_ip in ${existing_jail_ip_list}; do
+          
+        if [ "${entered_ip}" = "${used_ip}" ]; then
+          post_msg "Warning: Existing jail ${jailname} is already assigned IP address ${entered_ip}"
+        fi
+      done
+    # Close the definition record.
+    write-definition "${jaildefs}/${jailname}"
+    done  
+  done    
+          
+  # Return things back to the way they were at start of the function.
+  jaildefs="${saved_jaildefs}"
+  jailname="${org_jailname}"
+  read-definition "${jailname}"
+  rm "${jaildefs}/${jailname}"
+  rm "${jaildefs_global}/${jailname}"
+          
+ ########### End of Verify IP6 address is not already used. #################
+}
+          
+          
+group-prefixing () {
+               
+  # Save the command line list of jailnames if any
+  cmdlist=$@
+               
+  if [ "${cmdlist}" ]; then
+        
+    # Check for group prefix.
+    group=$1
+    jailname=$1
+          
+    # Remove the = sign from the i/p value which designates this
+    # as a "group prefix", if its there.
+    group=`echo -n "${group}" | sed 's/=.*$//'`
+          
+    # Determine if this is a prefix request.
+    if [ "${jailname}" != "${group}" ]; then
+        
+      # Only underscore, dash and alphanumeric characters are valid
+      # Convert every thing else to underscore.
+      group=`echo -n "${group}" | tr -c '[:alnum:]-_' _`
+      
+       
+      # The list, start/stop/restart, delete, archive and config commands
+      # look in /usr/local/etc/qjail.local directory for matching jailnames. 
+         
+      unset list
+            
+      for qjail in "${jaildefs}/${group}"*; do
+           
+        test "${qjail}" = "${jaildefs}/${group}*" \
+        && kill "Error: No match for group prefix. ${group}"      
+         
+        # Strip off the path from in front of the file name
+        filename=${qjail##*/}
+          
+        # Accumulate jail names into a list, even those 
+        # with a .norun or .man suffix.
+        list="${list} ${filename}"
+           
+      done
+          
+    else
+        
+      # Process the jailnames on the command line, building a list of
+      # file names and check they are all valid.
+             
+      # Roll through the command line.
+      for qjail in $cmdlist; do
+        shift
+                 
+          # Accumulate jail names into a list,
+          # even those that are .norun or .man suffix.
+          if [ -e "${jaildefs}/${qjail}" ]; then
+             list="${list} ${qjail}"
+             continue  
+          fi          
+                     
+          if [ -e "${jaildefs}/${qjail}.norun" ]; then 
+              list="${list} ${qjail}.norun"
+              continue
+          fi         
+                      
+          if [ -e "${jaildefs}/${qjail}.man" ]; then
+              list="${list} ${qjail}.man"
+              continue
+          fi          
+                      
+          kill "Error: Jail don't exist. ${qjail}"
+      done
+    fi
+  else
+    # No jailnames on the command line, so Accumulate all the file jailnames,
+    # jailnames will include the .norun and .man suffix if present.
+    #              
+    # Jails are started, stopped, and restarted in ascending alphabetical 
+    # order, "a to z" based on the spelling of the jailname
+    # and more importantly because of the output from the "ls" command below.  
+         
+    [ -d "${jaildefs}" ] && \
+      cd "${jaildefs}" && list=`ls`
+  fi
+}
+        
+write-definition () {
+        
+# Write all the definition info to it's file.
+       
+passed_deffile=$1
+     
+  (
+#      
+# The below variables populate the jails definition record located at 
+# /usr/local/etc/qjail.local/jailname for each jail to maintain the jails
+# definition settings between cycles of starting and stopping.
+# Some of the variables are only for qjail use while others are passed 
+# to the /usr/sbin/jail program for processing. 
+#       
+# These statements are what really define the jail      
+#      
+  echo "name=\"${jailname}\""
+  echo "ip4=\"${ip4}\""
+  echo "ip6=\"${ip6}\""
+  echo "path=\"${rootdir}\""
+  echo "interface=\"${nic_devicename}\""
+  echo "fstab=\"${fstab}\""
+  echo "securelevel=\"${securelevel}\""
+  echo "cpuset=\"${cpuset_id}\""
+  echo "fib=\"${exec_fib}\""
+  echo "vnet=\"${vnet}\""
+  echo "vinterface=\"${vnet_interface}\""
+  echo "rsockets=\"${allow_raw_sockets}\""
+  echo "ruleset=\"${devfs_ruleset_number}\""
+  echo "sysvipc=\"${allow_sysvipc}\""
+  echo "quotas=\"${allow_quotas}\""
+  echo "nullfs=\"${allow_mount_nullfs}\""
+  echo "zfs=\"${allow_mount_zfs}\""
+  echo "poststartssh=\"${poststart_ssh}\""
+              
+# These statements do not exist in the jail environment. 
+# Their just used by qjail and this is a convenient place to store them.
+    
+  echo "deffile=\"${deffile}\""
+  echo "image=\"${image}\""
+  echo "imagetype=\"${imagetype}\""
+  echo "imageblockcount=\"${imageblockcount}\""
+  echo "imagedevice=\"${imagedevice}\""
+   ) > "${passed_deffile}"
+            
+# The verify_ip rtn checks the entered ip address against all ip address
+# all ready in use across all zones. jaildefs_global holds all deffiles from 
+# all the zones. The verify_ip routine does that be repopulating jaildefs 
+# with jaildefs_global path. So in this write-definition routine we have to 
+# check for this condition, IE; that the paths are pointing to same location.
+# 
+# Remove path to get jail name.
+global_jailname=${passed_deffile##*/}
+temp_jaildefs_global="${jaildefs_global}/${global_jailname}"
+[ "${passed_deffile}" = "${temp_jaildefs_global}" ] || \
+   cp "${passed_deffile}" "${jaildefs_global}"
+
+}      
+       
+       
+read-definition () {
+      
+# Read the jails definition record /usr/local/etc/qjail.local/jailname  
+# populating the environment variables with the jails values. 
+      
+  jail_name=$1
+      
+  # Clean variables, prevent pollution.
+  unset jailname ip4 ip6 rootdir
+  unset nic_devicename fstab securelevel cpuset_id
+  unset exec_fib vnet vnet_interface allow_raw_sockets
+  unset allow_quotas allow_mount_nullfs allow_mount_zfs
+  unset allow_sysvipc devfs_ruleset_number
+  unset devicelink device device_md_number
+  unset deffile poststart_ssh  
+  unset image imagetype 
+        
+  [ -e "${jaildefs}/${jail_name}" ] && \
+       deffile="${jaildefs}/${jail_name}" 
+  [ -e "${jaildefs}/${jail_name}.norun" ] && \
+       deffile="${jaildefs}/${jail_name}.norun"
+  [ -e "${jaildefs}/${jail_name}.man" ] && \
+       deffile="${jaildefs}/${jail_name}.man"
+                 
+  [ -z "${deffile}" ] && kill "No definition record found."
+             
+  . "${deffile}"
+              
+  eval jailname=\"\${name}\"
+  eval ip4=\"\${ip4}\"
+  eval ip6=\"\${ip6}\"
+  eval rootdir=\"\${path}\"
+  eval nic_devicename=\"\${interface}\"
+  eval fstab=\"\${fstab}\"
+  eval securelevel=\"\${securelevel}\"
+  eval cpuset_id=\"\${cpuset}\"
+  eval exec_fib=\"\${fib}\"
+  eval vnet=\"\${vnet}\"
+  eval vnet_interface=\"\${vinterface}\"
+  eval allow_raw_sockets=\"\${rsockets}\"
+  eval devfs_ruleset_number=\"\${ruleset}\"
+  eval allow_sysvipc=\"\${sysvipc}\"
+  eval allow_quotas=\"\${quotas}\"
+  eval allow_mount_nullfs=\"\${nullfs}\"
+  eval allow_mount_zfs=\"\${zfs}\"
+  eval poststart_ssh=\"\${poststartssh}\"
+  eval deffile=\"\${deffile}\"
+  eval image=\"\${image}\"
+  eval imagetype=\"\${imagetype}\"
+  eval imageblockcount=\"\${imageblockcount}\"
+  eval imagedevice=\"\${imagedevice}\"
+}       
+         
+one_time_ssh () {
+# 
+# -c option modifies the jail to accept ssh access and creates
+# a user login account using the jailname as its login id and password.
+# This creates a exec.poststart command for this jail with this
+# "jexec jailname pw " command is executed the first time the jail is started.
+# After the first-time start, the jail must be restart for the changes 
+# to take effect. 
+#
+
+# Turn on ssh in jail
+echo "sshd_enable="YES"" >> "${rootdir}/etc/rc.conf"
+
+# Turn off dns reverse lookup for fast jail start
+echo "UseDNS no" >> "${rootdir}/etc/ssh/sshd_config"
+
+poststart_ssh="yes"
+}         
+          
+build_config_def () {
+# This builds the jail definition used in /etc/jail.conf.
+  ( echo "${jailname} { "
+    echo "host.hostname       =  \"${jailname}\";"
+    echo "path                =  \"${rootdir}\";"
+    echo "mount.fstab         =  \"${fstab}\";"
+    echo "exec.start          =  \"/bin/sh /etc/rc\";"
+    echo "exec.stop           =  \"/bin/sh /etc/rc.shutdown\";"
+    echo "exec.consolelog     =  \"/var/log/qjail.${jailname}.console.log\";"
+    echo "mount.devfs;"
+                  
+    [ ${ip4} ]                && \
+    echo "ip4.addr            =  ${ip4};"
+                     
+    [ ${ip6} ]                && \
+    echo "ip6.addr            =  ${ip6};"
+                   
+    [ ${nic_devicename} ]     && \
+    echo "interface           =  \"${nic_devicename}\";"
+                     
+    [ ${poststart_ssh} ]     && \
+    echo "exec.poststart      =  \"jexec ${jailname} \
+      pw adduser ${jailname} -p 12-12-12 -c Jail -m -g wheel -s csh -w yes\";"
+                    
+    [ ${securelevel} ]        && \
+    echo "securelevel         =  \"${securelevel}\";"
+                     
+    [ ${cpuset_id} ]          && \
+    echo "cpuset.id           =  \"${cpuset_id}\";"
+                   
+    [ ${exec_fib} ]           && \
+    echo "exec.fib            =  \"${exec_fib}\";"
+                 
+    [ ${allow_raw_sockets} ]  && \
+    echo "allow.raw_sockets;"
+                 
+    [ ${devfs_ruleset_number} ] && \
+    echo "devfs_ruleset       =  \"${devfs_ruleset_number}\";"
+                 
+    [ ${devfs_ruleset_number} ] || \
+    echo "devfs_ruleset       =  \"4\";"
+ 
+    [ ${allow_sysvipc} ]      && \
+    echo "allow.sysvipc;"
+                 
+    [ ${allow_quotas} ]       && \
+    echo "allow.quotas;"
+              
+    if [ ${allow_mount_nullfs} ]; then
+      echo "enforce_statfs      =  \"1\";"
+      echo "allow.mount;"
+      echo "allow.mount.nullfs;"
+    fi         
+              
+    if [ ${allow_mount_zfs} ]; then
+      echo "enforce_statfs      =  \"1\";"
+      echo "allow.mount;"
+      echo "allow.mount.zfs;"
+    fi       
+             
+    if [ ${vnet} ]; then 
+      # ${vnet} is loaded with ipfw, ipfilter, pf, or none for firewall
+      # selection, which is followed by [ng] or [be] for network configuration
+      # selection. This is inserted by the qjail config -v logic.
+                      
+      echo "vnet;"       
+      network=`echo ${vnet}  | awk -F "|" '{print $1}'`
+      firewall=`echo ${vnet} | awk -F "|" '{print $2}'`
+      passed_parms="${jailname} ${vnet_interface} ${firewall}"
+      path="/usr/local/bin"
+                       
+      if [ "${network}" = "be" ]; then
+        echo "exec.poststart=\"${path}/qjail.vnet.be start ${passed_parms}\";"
+        echo "exec.prestop=\"${path}/qjail.vnet.be stop ${passed_parms}\";"
+      fi                 
+                    
+      if [ "${network}" = "ng" ]; then
+        echo "exec.poststart=\"${path}/qjail.vnet.ng start ${passed_parms}\";"
+        echo "exec.prestop=\"${path}/qjail.vnet.ng stop ${passed_parms}\";"
+      fi              
+                 
+    fi           
+                 
+    echo "}"    
+  )       
+}            
+           
+# Define the terminate shortcut
+kill () {
+  echo -e "$*"
+  if [ -f "${log}" ]; then
+     log_record="`date +%Y%m%d%H%M.%S`*`whoami`*$*"
+     echo "${log_record}" >> "${log}"
+  fi
+  exit 3
+}
+
+# Define post_msg shortcut
+post_msg () {
+  echo -e "$*"
+  if [ -f "${log}" ]; then
+     log_record="`date +%Y%m%d%H%M.%S`*`whoami`*$*"
+     echo "${log_record}" >> "${log}"
+  fi
+}
+
+release_images () {
+# Generic release routine for image jails.
+  # unmount and release memory disc.
+  cd /
+  if [ "${imagedevice}" ]; then
+    umount "${rootdir}" > /dev/null 2> /dev/null
+    mdconfig -d -u "${imagedevice}" > /dev/null
+    [ "$1" = "keep" ] || rm -f "${image}"
+  fi
+}
+            
+create () {
+####jjbc#################### qjail CREATE ########################
+     
+  # Clean variables, prevent pollution.
+  unset rootdir fromarchive flavor deffile    
+  unset zone duplicate_times  
+  unset create_ssh nic_devicename ip4 ip6
+  unset imagesize create_image
+  unset imagetype image imageblockcount 
+      
+  duplicate_count=000
+      
+  shift; while getopts f:a:A:n:d:i:z:4:6:c arg; do case ${arg} in
+    f) flavor=${OPTARG};;
+    A) fromarchivezone=${OPTARG};;
+    a) fromarchive=${OPTARG};;
+    n) nic_devicename=${OPTARG};;
+    d) duplicate_times=${OPTARG};;
+    i) imagesize=${OPTARG}; create_image="YES";;
+    4) ip4=${OPTARG};;
+    6) ip6=${OPTARG};;
+    c) create_ssh="YES";;
+    z) zone=${OPTARG};;
+    ?) kill "${syntax_create}";;
+  esac; done; shift $(( ${OPTIND} - 1 ))
+              
+  if [ "${zone}" ]; then
+    jaildir="${jaildir}.${zone}"
+    [ -d "${jaildir}" ] || kill "Error: Un-known zone."
+    jaildefs="${jaildefs}.${zone}"
+    fstab="${fstab}.${zone}"
+    template="${jaildir}/template"
+    sharedfs="${jaildir}/sharedfs"
+    flavors_dir="${jaildir}/flavors"
+    archive_dir="${jaildir}/archive"
+  fi            
+            
+  jailname=$1
+                   
+  if [ $2 ]; then
+   post_msg "Error, an ip address on the command is nolonger valid,"
+   kill "Code -4 for IPv4 IP addresses and -6 for IPv6 IP addresses"
+  fi            
+               
+  # Verify the entered interface device name really exists.
+  if [ "${nic_devicename}" ]; then
+    nic_name=`ifconfig | grep -m 1 ${nic_devicename} | cut -f 1 -d :`
+    [ -z ${nic_name} ] \
+      && kill "Entered -n interface device name is not valid."
+  fi           
+              
+  if [ -z "${ip4}" -a -z "${ip6}" ]; then
+   kill "Error; An -4 or -6 IP address is mandatory."
+  fi           
+               
+  # Determine if -4 IP address is prefixed with "<if_device>|" and/or 
+  # suffixed with "/<netmask>" values. jail(8) says this is valid 
+  # syntax, but "/<netmask>" values are NOT allowed as valid syntax to qjail. 
+  # So here we check for it and issue error msg if found.
+  #            
+  if [ "${ip4}" ]; then
+   # strip off "|" and everything to the left of it.
+   #temp_ip4="${ip4#*|}"
+   # strip off "/" and everything to the right of it.
+#  temp_ip4="${temp_ip4%/*}"
+   temp_ip4="${ip4%/*}"
+   # Check if wrong syntax was used.
+   if [ "${temp_ip4}" != "${ip4}" ]; then
+     post_msg "Error Invalid -4 syntax"
+     kill "<ip_address>/<netmask> syntax is not allowed."
+   fi            
+                     
+   # At this point we have an valid -4 IP address. If no -n value then
+   # populate -n value with the interface default nic device name  
+   # obtained from route command. This is the automatic default behavior.  
+   # The default interface is the one connected to the public internet.
+   #                 
+   if [ -z "${nic_devicename}" ]; then
+   nic_devicename="$(route get -inet default 2> /dev/null | \
+   grep -o "interface.*" | cut -d ' ' -f 2)"
+   fi          
+  fi           
+               
+               
+  # Determine if -6 IP address is prefixed with "<if_device>|" and/or
+  # suffixed with "/<netmask>" values. jail(8) says this is valid
+  # syntax, but "/<netmask>" values are NOT allowed as valid syntax to qjail. 
+  # So here we check for it and issue error msg if found.
+  #            
+  if [ "${ip6}" ]; then
+   # strip off "|" and everything to the left of it.
+   #temp_ip6="${ip6#*|}"
+   # strip off "/" and everything to the right of it.
+   # temp_ip6="${temp_ip6%/*}"
+   temp_ip6="${ip6%/*}"
+   # Check if wrong syntax was used.
+   if [ "${temp_ip6}" != "${ip6}" ]; then
+     post_msg "Error Invalid -6 syntax"
+     kill "<ip_address>/<netmask> syntax is not allowed."
+   fi          
+               
+   # At this point we have an valid -6 IP address. If no -n value then
+   # populate -n value with the interface default nic device name 
+   # obtained from route command. This is the automatic default behavior.
+   # The default interface is the one connected to the public internet.
+   #           
+   if [ -z "${nic_devicename}" ]; then
+   nic_devicename="$(route get -inet default 2> /dev/null | \
+   grep -o "interface.*" | cut -d ' ' -f 2)"
+   fi          
+  fi           
+               
+               
+  # Need at least a name for new jail.
+  [ "${jailname}" -a $# -eq 1 ] || kill "${syntax_create}"
+                 
+  size=`echo "${jailname}" | wc -m`
+  [ "${size}" -gt 51 ] && \
+    kill "Error: jail name size exceeds the 50 character maximum."
+                  
+  temp_jailname=`echo -n "${jailname}" | tr -c '[:alnum:]-_' _`
+  if [ "${temp_jailname}" != "${jailname}" ]; then
+     post_msg "Invalid jail name"
+     kill "Only underscore, dash and alphanumeric characters are valid."
+  fi            
+                 
+  # Check that the jail name is not all numeric.
+  if expr "${jailname}" : "[0-9]*$" > /dev/null
+     then        
+       kill "Error: Numeric jail names are invalid. Jail name ${jailname}"
+  fi            
+                
+  # Check that -A is only coded with -a.
+  if [ "${fromarchivezone}" ]; then
+   if [ -z "${fromarchive}" ]; then
+     kill "Error: Option -A is only valid when coded with option -a."
+   fi          
+   if [ "${fromarchivezone}" != "nozone" ]; then
+     # Populate archive_dir with source target zone.
+     # strip off "." and everything to the right of it being the zone name.
+     zjaildir="${jaildir%.*}"
+     zjaildir="${zjaildir}.${fromarchivezone}"
+     [ -d "${zjaildir}" ] || kill "Error: Un-known -A achive zone."
+     archive_dir="${zjaildir}/archive"
+   else        
+     zjaildir="${jaildir%.*}"
+     archive_dir="${zjaildir}/archive"
+   fi          
+  fi           
+               
+  # Check that -c and -f ssh-default are not coded at same time.
+  [ "${flavor}" = "ssh-default"  -a -n "${create_ssh}" ] \
+      && kill "Error: Option -c and -f ssh-default are invaild together."
+                 
+  # Check that -d value was entered and it's numeric.
+  if [ -n "${duplicate_times}" ]; then
+    if expr "${duplicate_times}" : "[0-9]*$" > /dev/null
+     then       
+       # numeric let fall through    
+    else         
+      kill "Error: Option -d requires a numeric value."
+    fi         
+               
+    # Check that duplicate_times is not over limit.
+    [ "${duplicate_times}" -gt "100" ] \
+      && kill "Error: -d value greater than the maximum of 100."
+  else         
+    duplicate_times=0
+  fi           
+               
+  # Check that -d option only has a single ip4 address.
+  #            
+  if [ "${duplicate_times}" -gt "0" ]; then
+     # Replace the , separating multiple ip addresses with a space.
+     saved_ip4=`echo -n "${ip4}" | tr ',' ' '`
+     temp_ip4=`echo "${saved_ip4}" | awk '{print $2}'`
+     [ -z "${temp_ip4}" ] || \
+      kill "Error: -d option requires a single IPv4 address."
+  fi           
+                      
+  ##### Start of check for valid image size value. #########
+  #             
+  if [ "${imagesize}" ]; then
+               
+    # Check if entered value is alpha, IE missing numbers.
+    echo "${imagesize}" | grep "^[0-9]" > /dev/null
+    [ $? -ne 0 ] && kill "Error: -i value missing numbers."
+               
+    # Only suffix of G|g or M|m are valid. g for gigabyte, m for megabyte.
+    # Translate upper case characters to lower case.
+    imagesize=`echo "${imagesize}" | tr GM gm`
+               
+    # Only populate Timagesize if begins with digits and ends with g or m only.
+    unset Timagesize
+    Timagesize=`echo "${imagesize}" | sed -n 's/^\([0-9]\{1,\}[gm]\)$/\1/p'`
+    [ -z "${Timagesize}" ] && \
+         kill "Error: Invalid -i value. Only G|g or M|m suffix is valid."
+                
+    # Calculate blocks.  
+    value=`echo "${imagesize}"| \
+    sed -Ees:g:km:g -es:m:kk:g -es:k:"*2b":g -es:b:"*128w":g -es:w:"*4 ":g -e"s:(^|[^0-9])0x:\1\0X:g" -ey:x:"*":|bc`
+    [ $? -eq 0 -a ${value} -gt 0 ] || \
+    kill "Error: The image size you specified is invalid. ${imagesize}"
+               
+    imageblockcount=`echo ${value} / 1048576 | bc`
+  fi           
+               
+  # Check, whether qjail has been set up correctly. Existence of
+  # sharedfs is the indicator.
+  #            
+  [ -d "${sharedfs}" ] || kill "Error: sharedfs does not exist."
+               
+  [ "${flavor}" -a "${fromarchive}" ] && \
+   kill "Error: -a and -f invalid together."
+                     
+  # The = sign in the jailname is reserved for group prefix processing
+  # so it can not be used as part of a jailname. Remove it if there.  
+               
+  tjailname=`echo -n "${jailname}" | sed 's/=.*$//'`
+               
+  # Check for existence of = sign in jailname.
+  if [ "${tjailname}" != "${jailname}" ]; then
+    kill "Error: Equal sign is not valid in jailname. ${jailname}"
+  fi           
+                
+  # Save the info that was inputted with the create command.
+  new_jailname="${jailname}"
+  new_rootdir="${jaildir}/${new_jailname}"
+  new_deffile="${jaildefs}/${new_jailname}"
+  new_fstab="${fstab}/${new_jailname}"
+  new_ip4="${ip4}"
+  new_ip6="${ip6}"
+  new_nic_devicename="${nic_devicename}"
+  new_imageblockcount="${imageblockcount}"    
+               
+               
+  # Has a qjail reserved directory name been coded on the command?
+  #               
+  case ${new_jailname} in sharedfs|template|flavors|archive) \
+  kill "Error: This name is unavailable. ${new_jailname}";; esac
+                  
+  # Check if new jailname is used already across any zones.
+  test_deffile="${jaildefs_global}/${new_jailname}"
+  [ -e "${test_deffile}" -o \
+    -e "${test_deffile}.norun" -o \
+    -e "${test_deffile}.man" ] && \
+  kill "Error: Jailname already exists. ${new_jailname}"
+               
+  # Verify IP address is not already used. 
+  #              
+  if [ "${duplicate_times}" -eq "0" ]; then
+    deffile="${new_deffile}"
+    jailname="${new_jailname}"
+    if [ "${new_ip4}" ]; then
+      ip4="${new_ip4}"
+      verify_ip4
+    fi         
+    if [ "${new_ip6}" ]; then
+      ip6="${new_ip6}"
+      verify_ip6
+    fi           
+  fi             
+                 
+                 
+####### Start of creating jail routine. ################
+#                
+# By this point in the create sub-command logic, all the command input
+# has been validated and sanity checks passed ok. The following "if"
+# statement will create a directory tree type jail using a archive as 
+# the template. The "else" condition will create a directory tree type 
+# jail using the template filesystem and be flavorized by the default flavor
+# or a custom flavor if -f is coded on the command. 
+#                 
+                 
+  if [ "${fromarchive}" ]; then
+                 
+    # Check if valid full archive name.
+    # Remove every thing to the right of the jailname.
+    jailnamet=`echo -n "${fromarchive}" | sed 's/@.*$//'`
+    if [ "${jailnamet}" != "${fromarchive}" ]; then
+      fromarchive="${archive_dir}/${fromarchive}"
+      [ -e "${fromarchive}" ] || \
+        kill "Error: Full archive file name not found. ${fromarchive}"
+    fi         
+                 
+    # jail name only. IE; no full archive file name entered.
+    if [ "${jailnamet}" = "${fromarchive}" ]; then
+                 
+      # Roll through the archive directory looking for the last occurrence
+      # to match the jailname being the most current archive.
+      # IE: Most current archive for the jallname has higher number date
+      # so physically follows the older dated archive files in the
+      # archive directory. The archive file names have a jailname suffixed
+      # with @ followed by the time stamp. Roll through the archive directory
+      # ignoring everything to the right of the @
+      #        
+      for archive in "${archive_dir}/${jailnamet}"@*; do
+        fromarchive=${archive}
+      done     
+                
+      # If no match found this variable will contain only the path
+      # to the archive directory, so no file found by this test.
+      #        
+      [ -e "${fromarchive}" ] || \
+        kill "Error: No archive file found for ${jailname}"
+    fi         
+                 
+    # At this point the fromarchive holds the full path to the
+    # archive file. Either from being entered with the qjail restore command
+    # or found by the above archive directory search if only the jail name
+    # was entered with the -a option of the create command.
+    #          
+    # Restore the archive file. This will populate the jail name filesystem
+    # plus the fstab and deffile definition records to a temp directory.
+    #          
+    # Modify target if from archive zone.
+    #          
+               
+    if [ "${fromarchivezone}" ]; then   
+      temp_restore="${jaildir}/temp_restore"
+      temp_rootdir="${temp_restore}${zjaildir}/${jailnamet}"
+    else       
+      temp_restore="${jaildir}/temp_restore"
+      temp_rootdir="${temp_restore}${jaildir}/${jailnamet}"
+    fi         
+               
+    mkdir -p "${temp_restore}"
+    tar xf ${fromarchive} -C ${temp_restore} > /dev/null 2> /dev/null
+    if [ $? -ne 0 ]; then
+      rm -rf "${temp_restore}"
+      kill "Error: Extract archive failed from ${fromarchive}"
+    fi            
+                
+    # Rename the restored directory tree from the archive file name
+    # to the new jail name from create command input.
+    #            
+    mv "${temp_rootdir}" "${new_rootdir}"    
+    rm -rf "${temp_restore}"
+               
+               
+    # Prep the variables with the new content.
+    rootdir="${new_rootdir}"
+    jailname="${new_jailname}"
+    deffile="${new_deffile}"
+    fstab="${new_fstab}"
+    ip4="${new_ip4}"
+    ip6="${new_ip6}"
+    nic_devicename="${new_nic_devicename}"
+    imageblockcount="${new_imageblockcount}"
+                     
+    # This marks the just restored archive as a directory tree jail.
+    unset imagetype image
+                 
+    if [ "${duplicate_times}" -eq "0" -a -z "${create_image}" ]; then
+                 
+      [ -n "${create_ssh}" ] &&  one_time_ssh
+               
+      # Write the jails properties file.
+      write-definition "${deffile}"
+                 
+      echo ${sharedfs} ${rootdir}/sharedfs nullfs ro 0 0 > "${fstab}"
+                  
+      post_msg "Successfully created  ${jailname}"
+    fi         
+               
+  else         
+               
+    # This is the start of create jail without using an archive as a template.
+    # Using the template.
+    #          
+                       
+    # Prep the variables.
+    rootdir="${new_rootdir}"
+    jailname="${new_jailname}"
+    deffile="${new_deffile}"
+    fstab="${fstab}/${new_jailname}"
+    ip4="${new_ip4}"
+    ip6="${new_ip6}"
+    nic_devicename="${new_nic_devicename}"
+                                  
+    # If no -f option then everyone gets the default flavor
+    # named "default".
+    #          
+    [ ${flavor} ] || flavor=${default_flavor}
+               
+    # Does the flavor exist?
+    [ -e "${flavors_dir}/${flavor}" ] || \
+    kill "Error: Flavor not found. ${flavor}"
+               
+    # Check the flavor for directories it should NOT be playing with.
+    #          
+    # Load directory names to be excluded from diff to std-out
+    # and pipe to the diff -X option.
+    #          
+    example_flavor="/usr/local/share/examples/qjail/default"
+    flavor_path="${flavors_dir}/${flavor}"
+               
+    /bin/cat  << EOF |
+etc
+home
+root
+EOF
+           
+    diff -ruq -X - "${example_flavor}" "${flavor_path}"
+    [ $? -eq 0 ] || \
+    kill "Error invalid directories in flavor ${flavor}."
+              
+    # Create the new jailname directory and copy the template to it.
+    mkdir -p "${rootdir}" || kill \
+      "Error: Could mkdir ${rootdir}." 
+               
+    cd "${template}" || kill \
+      "Error: Could not cd to ${template}." 
+               
+    find . | cpio -p "${rootdir}" 1> /dev/null 2>&1 
+    [ $? -eq 0 ] || kill "Error: Couldn't copy template."
+               
+    # Merge the flavor files into the newly created jailname directory tree.
+    # Doing it under a "for" so the "default" directory is not copied, just
+    # it's contents. 
+    #          
+    for flavor in ${flavor}; do
+               
+      cd "${flavors_dir}/${flavor}" || kill \
+       "Error: Could not cd to ${flavors_dir}/${flavor}."
+               
+      find . | cpio -p -u "${rootdir}" 1> /dev/null 2>&1
+      [ $? -eq 0 ] || 
+        kill "Error: Could not fully install flavor ${flavor}."
+    done       
+               
+    # Flag this as a directory tree type jail for now.
+    unset imagetype image          
+               
+    if [ "${duplicate_times}" -eq "0" -a -z "${create_image}" ]; then
+               
+       [ -n "${create_ssh}" ] &&  one_time_ssh
+               
+       # Create the definition record for the newjail.
+       write-definition "${deffile}"
+                
+       # Create the fstab file for the new jailname, 
+       # it is used at boot time and  jail start time.
+       #           
+       echo ${sharedfs} ${rootdir}/sharedfs nullfs ro 0 0 > "${fstab}"
+               
+       post_msg "Successfully created  ${jailname}"
+    fi         
+               
+  fi    # end of if [ "${fromarchive}" ]; then
+               
+               
+############ Start of image jail processing ###############
+#              
+# By this point in the create sub-command logic, a directory tree type jail 
+# has already been created for the jailname, either using an archive file 
+# as the template or using the template filesystem and being flavorized
+# by the default flavor or a custom flavor by the above logic. 
+#              
+# If the image jail type was coded, -i  and no -d option on the create command 
+# then this following logic is executed which creates a empty sparse image file,
+# copies the directory tree jail into the sparse jail, deletes the directory 
+# tree jail and renames the image jail with the directory tree jail names, 
+# builds the fstab and definition files.
+#              
+  if [ "${duplicate_times}" -eq "0" -a -n "${create_image}" ]; then
+    # Prep  work variables.
+    saved_rootdir="${rootdir}"
+               
+    # Create the build directory; the .img file is going to be located in.
+    # This will also be it's mount point.
+    rootdir="${jaildir}/${jailname}-img"
+    mkdir -p "${rootdir}" || \
+      kill "Error: Couldn't create jail mount point. ${rootdir}"
+               
+    # The sparse image is located inside it's mount point directory.
+    image="${rootdir}/${jailname}.img"
+               
+    # Create the empty .img file.
+    touch "${image}"
+                        
+    # Create the sparse image file.
+    dd if="/dev/zero" of="${image}" bs=1m count=0 \
+     seek=${imageblockcount} 1> /dev/null 2>&1 || \
+     kill "Error: Couldn't create the sparse image file. ${image}"
+                          
+    # Attach the .img file as a memory disk.
+    imagedevice=`mdconfig -a -t vnode -f "${image}"`
+    if [ $? -ne 0 ]; then
+      release_images 
+      kill "Error: Failed to 'mdconfig' the sparse image. ${image}"
+    fi         
+               
+    device=${imagedevice}
+               
+    # Format memory disk image.
+    newfs -U "/dev/${imagedevice}" 1> /dev/null 2>&1 
+    if [ $? -ne 0 ]; then
+      release_images 
+      kill "Error: Couldn't newfs the memory disk. ${imagedevice}"
+    fi         
+               
+    # Mount the memory disk image.
+    mount "/dev/${imagedevice}" "${rootdir}" 
+    if [ $? -ne 0 ]; then
+      release_images 
+      kill "Error: Couldn't mount memory disk. ${device}"
+    fi         
+               
+    # Copy the contents of the previously built directory tree jail. 
+    cp -R "${saved_rootdir}/" "${rootdir}"  
+    if [ $? -ne 0 ]; then
+      release_images 
+      kill "Error: Couldn't copy directory tree to image jail. ${rootdir}"
+    else       
+      # Release & keep the memory disk.
+      release_images keep
+    fi         
+                
+    # Scratch the directory tree jail and it's admin files.
+    # freeing up it's jailname.
+               
+    rm -rf "${saved_rootdir}"
+    rm -rf "${jaildefs_global}/${jailname}"
+    rm -f  "${deffile}"
+    rm -f  "${fstab}"  
+                
+    # Rename the image build directory using the 
+    # directory tree jailname.
+    mv  "${rootdir}" "${saved_rootdir}"
+               
+    # Re-populate the variables with correct content so every thing that
+    # follows will have the correct info.
+    rootdir="${saved_rootdir}"
+    image="${rootdir}/${jailname}.img"
+                                 
+    echo ${sharedfs} ${rootdir}/sharedfs nullfs ro 0 0 > "${fstab}"
+               
+    # The imagetype variable is used as a switch. IE: Has content or not.
+    # The word "simple" has no meaning and is never checked for.
+    #          
+    imagetype="simple"
+               
+    # Perform subroutine to add ssh login -c option
+    [ -n "${create_ssh}" ] && one_time_ssh
+               
+    write-definition "${deffile}"
+               
+    post_msg "Successfully created  ${jailname}"
+                
+  fi           
+               
+               
+############# Start of duplication routine. ################ 
+#              
+# By this point in the create sub-command logic, there is either a
+# directory tree type jail or a sparse image jail present. 
+# If a sparse image jail was created by the above logic means there was no
+# -d option and the following duplicate logic is bypassed. 
+# Otherwise a directory tree jail is presented to the following logic which
+# will duplicate this jail this number of times appending the dup count to 
+# the jail name and bumping the IPv4 ip address by one.
+#              
+               
+  if [ "${duplicate_times}" -ne "${duplicate_count}" ]; then
+               
+    # Prep some work variables. 
+    saved_jailname="${jailname}"
+    saved_rootdir="${rootdir}"
+    saved_deffile="${deffile}"
+    saved_fstab="${fstab}"
+    saved_image="${image}"
+                
+    while [ "${duplicate_count}" -ne "${duplicate_times}" ]; do
+      duplicate_count=$(( $duplicate_count + 1 ))
+      jailname="${saved_jailname}-${duplicate_count}"
+      rootdir="${saved_rootdir}-${duplicate_count}"
+      deffile="${jaildefs}/${jailname}"         
+      fstab="${saved_fstab}-${duplicate_count}"
+      image="${rootdir}/${jailname}.img"
+                     
+      # Check if new dup jailname is created already
+      tmp_deffile="${jaildefs}/${jailname}"
+                
+      if [ -e "${tmp_deffile}" -o \
+           -e "${tmp_deffile}.norun" -o \
+           -e "${tmp_deffile}.man" ]; then
+          post_msg "Bypassed existing jail ${jailname}"
+          continue
+      fi        
+               
+      # Verify the dup ip address is not already used.
+      ip4="${ip4}"
+      verify_ip4
+                              
+      if [ "${create_image}" ]; then
+        # Create the dup directory; the .img file is going to be located in.
+        # This will also be it's mount point.
+        mkdir -p "${rootdir}" || \
+          kill "Error: Couldn't create jail mount point. ${rootdir}"
+                
+        # Create the empty .img file.
+        touch "${image}"
+                
+        # Create the sparse image file.
+        dd if="/dev/zero" of="${image}" bs=1m count=0 \
+         seek=${imageblockcount} 1> /dev/null 2>&1 || \
+         kill "Error: Couldn't create the sparse image file. ${image}"
+                 
+        # Attach the .img file as a memory disk.
+        imagedevice=`mdconfig -a -t vnode -f "${image}"`
+        if [ $? -ne 0 ]; then
+          release_images 
+          kill "Error: Failed to 'mdconfig' the sparse image. ${image}"
+        fi     
+                
+        device=${imagedevice}
+                 
+        # Format memory disk image.
+        newfs -U "/dev/${imagedevice}" 1> /dev/null 2>&1 
+        if [ $? -ne 0 ]; then
+          release_images 
+          kill "Error: Couldn't newfs the memory disk. ${imagedevice}"
+        fi     
+                 
+        # Mount the memory disk image.
+        mount "/dev/${imagedevice}" "${rootdir}" 
+        if [ $? -ne 0 ]; then
+          release_images 
+          kill "Error: Couldn't mount memory disk. ${device}"
+        fi     
+               
+        # Copy the contents of the previously built directory tree.
+        cp -R "${saved_rootdir}/" "${rootdir}"
+        if [ $? -ne 0 ]; then
+           release_images 
+           kill \
+           "Error: Couldn't copy directory tree to image jail. ${rootdir}"
+        fi     
+               
+        # Perform subroutine to add ssh login -c option
+        [ -n "${create_ssh}" ] && one_time_ssh
+               
+        # Release memory disk.
+        release_images keep
+               
+        echo ${sharedfs} ${rootdir}/sharedfs nullfs ro 0 0 > "${fstab}"
+               
+        imagetype="simple"
+                   
+        # Create the definition record for the newjail.
+        write-definition "${deffile}"
+                  
+      else      
+        # This is dup logic for directory tree jails.
+        mkdir -p "${rootdir}" || kill "unable to create ${rootdir}"       
+        cd "${saved_rootdir}" || \
+           kill "unable to cd ${saved_rootdir}"
+        find . | cpio -p "${rootdir}" 1> /dev/null 2>&1
+        [ $? -eq 0 ] || kill "Error: Couldn't copy template jail."
+               
+        # Perform subroutine to add ssh login -c option
+        [ -n "${create_ssh}" ] && one_time_ssh
+                 
+        # Create the directory tree jails fstab file.
+        echo ${sharedfs} ${rootdir}/sharedfs nullfs ro 0 0 > "${fstab}"
+                
+        unset imagetype  image imageblockcount
+                 
+        # Create the definition record for the newjail.
+        write-definition "${deffile}"
+                 
+      fi       
+               
+      # Bump the ip by one
+      short_ip="${ip4%.*}"
+      ip_suffix="${ip4##*.}"
+      ip_suffix=$(( ${ip_suffix} + 1 ))
+      ip4="${short_ip}.${ip_suffix}"
+               
+      post_msg "Successfully created  ${jailname}"
+               
+    done         
+               
+    # Delete the directory tree jail used as source for dup process.       
+    rm -rf "${saved_rootdir}"
+    rm -rf "${saved_deffile}"
+    rm -rf "${jaildefs_global}/${saved_jailname}"
+    rm -rf "${saved_fstab}"
+                
+  fi           
+exit 0         
+######## End of duplication routine. #########################
+}              
+               
+delete () {      
+###jjbd##################### qjail DELETE ########################
+
+  shift; while getopts Az: arg; do case ${arg} in
+    A) deletealljails="YES";;
+    z) zone=${OPTARG};;
+    ?) kill "${syntax_delete}";;
+  esac; done; shift $(( ${OPTIND} - 1 ))
+       
+  if [ "${zone}" ]; then
+    jaildir="${jaildir}.${zone}"
+    [ -d "${jaildir}" ] || kill "Error: Un-known zone."
+    jaildefs="${jaildefs}.${zone}"
+    fstab="${fstab}.${zone}"
+  fi
+        
+  # Specifying no jailsnames is only acceptable if deleting all jails.
+  [ $# -lt 1 -a -z "${deletealljails}" ] && \
+    kill "${syntax_delete}"
+       
+  # -A flag to delete all the jails cannot have jailnames on it
+  [ $# -gt 0 -a "${deletealljails}" ] && \
+  kill "Syntax Error: Must not specify jailnames on delete -A."
+           
+  # Save the command line list of jailnames if any
+  cmdlist=$@
+      
+  # Perform the group-prefixing function.
+  group-prefixing ${cmdlist}
+           
+  # Process the list built by group-prefixing.
+  for qjail in ${list}; do
+       
+    # If jail is still running, bypass deleting it.
+    if jls -j ${qjail} > /dev/null 2> /dev/null; then
+        post_msg "Bypassed running jail ${qjail}"
+        continue
+    fi     
+            
+    # Read the jails definition record populating the environment variables
+    # with the jails values.
+    read-definition ${qjail}
+                 
+    # Now we have everything needed to delete the jail. Delete the
+    # jailname definition record and it's fstab.qjail.jailname record,
+    # plus the global definition record.
+    #
+    # Strip off the path from in front of the deffile name so we can
+    # get the jailname with .norun or .man if it's there.
+    filename=${deffile##*/}
+    rm -f "${deffile}" 
+    rm -f "${jaildefs_global}/${filename}"
+    rm -f "${fstab}"
+    rm -f "/var/log/qjail.${filename}.console.log"
+    [ "${vnet}" ] && rm -f "${jaildefs_vnet}/${jailname}"
+         
+    # Delete the jail directory
+    rm -rf "${rootdir}"
+          
+    post_msg "Successfully deleted  ${jailname}"
+         
+  done
+exit 0
+}                
+ 
+logmsg () {
+       
+#######jjbm################# qjail logmsg ########################
+
+# Message already logged by catch all logic at start of script.
+# Is the message all blank?
+#
+msg=`echo "$*" | awk '{print $2}'`
+if [ -z "${msg}" ]; then
+  post_msg "Error: You submitted a blank log msg."
+  "${syntax_logmsg}"
+fi
+exit 0       
+}
+
+list () {          
+     
+#######jjbl################# qjail LIST ########################
+    
+  # Clean variables, prevent pollution.
+  unset cmdlist group jailname filename
+  unset qjail list state zone
+        
+  # no flags allowed, error out, but still shift over var line.
+  shift; while getopts z: arg; do case ${arg} in
+    z) zone=${OPTARG};;
+    ?) kill "${syntax_list}";;
+  esac; done; shift $(( ${OPTIND} - 1 ))
+  
+        
+  if [ "${zone}" ]; then
+    jaildir="${jaildir}.${zone}"
+    [ -d "${jaildir}" ] || kill "Error: Un-known zone."
+    jaildefs="${jaildefs}.${zone}"
+    zone_msg="Jails in zone  ${zone}"
+  fi
+      
+  # Save the command line list of jailnames if any.
+  cmdlist=$@
+       
+  # Perform the group-prefixing function.
+  group-prefixing ${cmdlist}
+                      
+  echo " "
+  echo "${zone_msg}"
+  printf "%-3s %-4s %-3s %-15s %s\\n" STA JID NIC IP Jailname 
+  echo   "--- ---- --- --------------- --------------------------------------------------"
+        
+  # Process the list built by group-prefixing and list the jailname info.
+  for qjail in ${list}; do
+                
+    # Read the jails definition record populating the environment variables 
+    # with the jails values.
+        
+    read-definition ${qjail}
+               
+    if [ "${imagetype}" ]; then
+      state="I"
+    else          
+      state="D"
+    fi         
+                
+    if jls -j ${qjail} > /dev/null 2> /dev/null; then
+      state="${state}R"
+      jid=`jls -j ${qjail} jid`
+    else       
+      state="${state}S"
+      unset jid
+    fi        
+               
+    # Check to see if jailname has .norun or .man suffix. 
+    # Remove jailname. leaving norun or man suffix if present.
+    tjailname="${qjail##*.}"
+    [ "${tjailname}" = "norun" ] && state="${state}N"
+    [ "${tjailname}" = "man" ] && state="${state}M"
+                 
+    # Is ip4 and ip6 empty? may be a vnet jail.
+    if [ -z "${ip4}" -a -z "${ip6}" ]; then
+      if [ -n "${vnet}" ]; then
+        temp_ips="vnet|${vnet}"
+        print_nic="${vnet_interface}"
+      else         
+        temp_ips="none"
+      fi         
+    else        
+      if [ -n "${ip4}" ]; then
+        temp_ips="${ip4}"
+        if [ -n "${ip6}" ]; then
+          temp_ips="${temp_ips},${ip6}"
+        fi
+        print_nic="${nic_devicename}"
+      else
+        if [ -n "${ip6}" ]; then
+          temp_ips="${ip6}"
+          print_nic="${nic_devicename}"
+        fi
+      fi
+    fi    
+                
+    # At this point the temp_ips variable can have more that a single IP address.
+    # It may have multiple IPv4 addresses combined with multiple IPv6 addresses.
+    # Replace the , separating multiple ip addresses with a space
+    # so they can be indexed through.
+    temp_ips=`echo -n "${temp_ips}" | tr ',' ' '`
+    unset multiple_ip
+
+    for print_ips in ${temp_ips}; do
+      if [ -z "${multiple_ip}" ]; then
+        printf "%-3s %-4s %-3s %-15s %s\\n" "${state}" "${jid:-N/A}" "${print_nic}" "${print_ips}" "${jailname}"
+        log_record=`printf "%-3s %-4s %-3s %-15s %s\\n" "${state}" "${jid:-N/A}" "${print_nic}" "${print_ips}" "${jailname}"`
+        multiple_ip=yes
+      else       
+        unset jid 
+        printf "    %-4s %s\\n" "${jid}" "    ${print_ips}"
+        log_record=`printf "    %-4s %s\\n" "${jid}" "    ${print_ips}"`
+      fi       
+              
+      if [ -f "${log}" ]; then
+        log_record="`date +%Y%m%d%H%M.%S`*`whoami`*${log_record}"
+        echo "${log_record}" >> "${log}"
+      fi      
+             
+    done       
+        
+    # Close the definition record.
+    write-definition "${deffile}"     
+  done            
+  echo " "        
+  echo " "        
+exit 0
+}      
+         
+update () {      
+###jjbu##################### qjail UPDATE ########################
+       
+  # Clean variables, prevent pollution.
+  unset action_b action_p 
+       
+  flag_count=0
+                    
+  shift; while getopts l:z:bpPS arg; do case ${arg} in
+     b) action_b="binary-update"; flag_count=$(( $flag_count + 1 ));;
+     p) action_p="portsnap"; flag_count=$(( $flag_count + 1 ));;
+     P) action_P="copy-ports"; flag_count=$(( $flag_count + 1 ));;
+     S) action_S="copy-src"; flag_count=$(( $flag_count + 1 ));;
+     l) logging=${OPTARG}; flag_count=$(( $flag_count + 1 ));;
+     z) zone=${OPTARG};;
+     ?) kill "${syntax_update}";;
+  esac; done; shift $(( ${OPTIND} - 1 ))
+         
+  if [ "${zone}" ]; then
+    jaildir="${jaildir}.${zone}"
+    [ -d "${jaildir}" ] || kill "Error: Un-known zone."
+    jaildefs="${jaildefs}.${zone}"
+    fstab="${fstab}.${zone}"
+    sharedfs="${jaildir}/sharedfs"
+  fi       
+         
+  # Check for no flags set.
+  [ $flag_count -eq 0 ] && kill \
+        "Error: NO options coded.\n ${syntax_update}"
+  [ $flag_count -gt 1 ] && kill \
+        "Error: To many options coded.\n ${syntax_update}"
+                 
+  # Turn logging on or off logging of all qjail commands issued.
+  if [ -n "${logging}" ]; then
+     [ "${logging}" = "on" -o "${logging}" = "off" ] ||
+        kill "Error: Invalid value in -l option = ${logging}"
+                
+     if [ "${logging}" = "on" ]; then
+        if [ -f "${log}" ]; then
+           kill "qjail system logging already enabled."
+        else        
+           touch "${log}"
+           echo "/var/log/qjail.log                      600  3     100  *     -" \
+           >> /etc/newsyslog.conf
+           post_msg "qjail system logging enabled."
+        fi        
+     fi         
+                  
+     if [ "${logging}" = "off" ]; then
+        if [ -f "${log}" ]; then
+           rm "${log}"
+           post_msg "qjail system logging turned off."
+        else
+           kill "qjail system logging already off."
+        fi
+     fi
+  fi
+                
+              
+  # Run portsnap option? 
+  if [ "${action_p}" ]; then
+      action_p="fetch"
+      echo " "    
+      date      
+      echo " "   
+      post_msg "The elapse download time of the portsnap compressed ports file"
+      post_msg "is estimated at 25 minutes for the initial fetch."
+      post_msg "Subsequent fetches will generally take less than a minute."
+      echo " "    
+               
+      p_conf="/usr/local/etc/qjail.portsnap.conf"
+               
+      portsnap -f "${p_conf}" "${action_p}"
+      [ $? -eq 0 ] || kill "Error: Portsnap fetch failed." \
+                   && post_msg "Portsnap fetch completed successfully"
+      echo " "     
+      date      
+      echo " "  
+      action_p="extract"
+               
+      [ -e "${sharedfs}/usr/ports/.portsnap.INDEX" ] \
+           && action_p="update"
+                 
+      if [ "${action_p}" = "extract" ]; then
+        post_msg "The ports are being extracted to sharedfs/usr/ports directory"
+        post_msg "tree. The elapse time for this to complete is estimated at 20"
+        post_msg "minutes for the initial extract."
+      fi        
+                
+      if [ "${action_p}" = "update" ]; then
+        post_msg "The ports sharedfs/usr/ports directory tree is being updated."
+        post_msg "The elapse time for this to complete is estimated at 1 minute"
+        post_msg "to 10 minutes depending on how current your ports system is."
+      fi        
+               
+      ports="${sharedfs}/usr/ports"
+                    
+      echo " "    
+      portsnap -f "${p_conf}" -p "${ports}" "${action_p}" 1> /dev/null 2>&1
+      if [ $? -ne 0 ]; then
+         kill "Error: Portsnap extract/update failed." 
+      else     
+         post_msg "Portsnap ${action_p} completed successfully"
+      fi       
+  fi             
+                 
+  # Run sharedfs system binaries update?       
+  if [ "${action_b}" ]; then
+               
+    [ -d "${sharedfs}" ] || kill "Error: sharedfs does not exist."
+               
+    # Sanity check to see if any jails are running.
+    # Using the "jls" command to build list of jail names that are running.
+    #            
+    list=`jls name`      
+    if [ "${list}" ]; then
+      # There are jails running. Do they belong to qjail?
+      for qjail in ${list}; do
+        # ignore jail if it don't belong to qjail.
+        myjails="${jaildefs_global}"
+        [ -e "${myjails}/${qjail}" -o  -e "${myjails}/${qjail}.man" ] || \
+        continue       
+        # Fall through means running jail belongs to qjail.
+        post_msg "Error: All jails have to be stopped."
+        kill "This jail is running. ${qjail}"
+      done          
+    fi            
+                
+    # Create list of sharedfs directories containing running libs.
+    b_dirlist="bin lib libexec sbin usr/bin usr/include usr/lib "
+    b_dirlist="${b_dirlist}usr/libdata usr/libexec usr/sbin"
+               
+    # amd64 needs some extra libs
+    case `uname -p` in amd64) b_dirlist="${b_dirlist} usr/lib32";; esac
+                  
+    # Delete sharedfs running libs directories
+    echo " "   
+    cd "${sharedfs}"
+    for dir in ${b_dirlist}; do
+       rm -r ${dir} 
+       if [ $? -ne 0 ]; then
+          kill "Error: Delete of sharedfs binaries for ${dir} failed."
+       else    
+          post_msg "Deletion of sharedfs binaries successful for ${dir}."
+       fi      
+    done       
+               
+    # Populate sharedfs with running libs from host.
+    echo " "           
+    cd /         
+    for dir in ${b_dirlist}; do
+      find ${dir} | cpio -dmp "${sharedfs}" 1> /dev/null 2>&1 
+      if [ $? -ne 0 ]; then
+        kill "Error: Copying host's binaries for ${dir} failed." 
+      else          
+        post_msg "Copied host's binaries to sharedfs successfully for ${dir}."
+      fi           
+      chflags -R noschg "${sharedfs}/${dir}"
+      chflags -R nosunlink "${sharedfs}/${dir}"
+    done        
+                  
+    # Create the perl link if not all ready done.
+    [ ! -L "${sharedfs}/usr/bin/perl" ] && \
+    ln -s /usr/local/bin/perl "${sharedfs}/usr/bin/perl"
+               
+    echo " "   
+    post_msg "Host to sharedfs binaries update completed successfully."
+               
+  fi           
+               
+               
+  # Copy hosts /usr/src directory tree to sharedfs.
+  #            
+  if [ "${action_S}" ]; then
+    echo "Copy hosts /usr/src routine entered"
+    hostsrc="/usr/src/"
+    jailsrc="${sharedfs}/usr/src/"
+    [ -e "${hostsrc}" ] || \
+      kill "Error; No host ${hostsrc} to copy."
+               
+    echo " "   
+    post_msg "Removing existing /usr/src directory from sharedfs."
+    post_msg "Est LT 1 minute elapse time for this to complete."
+    date       
+    rm -r "${jailsrc}"
+    date       
+    cd "${hostsrc}" || kill \
+       "Error: Could not cd to ${hostsrc}."
+    echo " "   
+    post_msg "Copying host /usr/src to sharedfs /usr/src."
+    post_msg "Est LT 17 minutes elapse time for this to complete."
+    date       
+    find . | cpio -p "${jailsrc}" 1> /dev/null 2>&1
+    [ $? -eq 0 ] || kill "Error: Couldn't copy /usr/src/."
+    date       
+  fi           
+               
+  # Copy hosts /usr/ports directory tree to sharedfs.
+  #            
+  if [ "${action_P}" ]; then
+    echo "Copy hosts /usr/src routine entered"
+    hostports="/usr/ports/"
+    jailports="${sharedfs}/usr/ports/"
+    [ -e "${hostports}" ] || \
+      kill "Error; No host ${hostports} to copy."
+    [ -e "${jailports}" ] || \
+      kill "Error; No sharedfs ports to delete."
+               
+    echo " "   
+    post_msg "Removing existing /usr/ports directory from sharedfs."
+    post_msg "Est LT 1 minute elapse time for this to complete."
+    date       
+    rm -r "${jailports}"
+    date       
+    cd "${hostports}" || kill \
+       "Error: Could not cd to ${hostports}."
+    echo " "   
+    post_msg "Copying host /usr/ports to sharedfs /usr/ports."
+    post_msg "Est LT 17 minutes elapse time for this to complete."
+    date       
+    find . | cpio -p "${jailports}" 1> /dev/null 2>&1
+    [ $? -eq 0 ] || kill "Error: Couldn't copy /usr/ports."
+    date       
+  fi           
+               
+               
+exit 0    
+}        
+      
+install () {        
+#####jjbin################### qjail INSTALL ########################
+      
+  # Clean variables, prevent pollution.
+  unset local_install install_file_location  
+  unset release zone logging   
+        
+  shift; while getopts f:h:z:l arg; do case ${arg} in
+    f) install_file_location=${OPTARG}; local_install="yes";;
+    h) ftp_host=${OPTARG};;
+    l) logging="YES";;
+    z) zone=${OPTARG};;
+    ?) kill "${syntax_install}";;
+  esac; done; shift $(( ${OPTIND} - 1 ))
+                
+  # NO positional parameters allowed on this sub-command.
+  [ $# -eq 0 ] || kill "${syntax_install}"
+                  
+  if [ "${zone}" ]; then
+    temp_zonename=`echo -n "${zone}" | tr -c '[:alnum:]-_' _`
+    if [ "${temp_zonename}" != "${zone}" ]; then
+      post_msg "Invalid zone name"
+      kill "Only underscore, dash and alphanumeric characters are valid."
+    fi         
+              
+    if expr "${temp_zonename}" : "[0-9]*$" > /dev/null
+     then         
+       kill "Numeric zone names are invalid. Zone name ${temp_zonename}"
+    fi         
+          
+    post_msg "This is the zone name used ${zone}"
+             
+    jaildir="${jaildir}.${zone}"
+    jaildefs="${jaildefs}.${zone}"
+    fstab="${fstab}.${zone}"
+    template="${jaildir}/template"
+    sharedfs="${jaildir}/sharedfs"
+    download="${jaildir}/download"
+    flavors_dir="${jaildir}/flavors"
+    archive_dir="${jaildir}/archive"
+  fi             
+                 
+  # Sanity check to see if any jails are running.
+  # Using the "jls" command to build list of jail names that are running.
+         
+  list=`jls name`
+  if [ "${list}" ]; then
+    # There are jails running. Do they belong to qjail?
+    for qjail in ${list}; do
+      # ignore jail if it don't belong to qjail.
+      myjails="${jaildefs_global}"    
+      [ -e "${myjails}/${qjail}" -o  -e "${myjails}/${qjail}.man" ] || continue
+      # Fall through means running jail belongs to qjail.
+      post_msg "Error: All jails have to be stopped."
+      kill "This jail is running. ${qjail}"
+    done          
+  fi                
+                 
+  # Check that host OS is not running a -BETA or -RC version.
+  # The output of the uname -r command is different format.
+  # IE: [9.1-BETA1 or 9.1-RC1] where as for normal releases
+  # [9.0-RELEASE or 9.0-RELEASE-p1].
+                      
+  # Get release of running host. (IE: 9.0-RELEASE)
+  release=`uname -r`
+                    
+  if [ "${local_install}" != "yes" ]; then
+                       
+    #  For testing, over ride release value here or reset on the host by
+    #  setenv UNAME_r "9.1-STABLE"
+    #  echo "rel0=${release}"     
+    #  release="9.0-RELEASE-p3"
+    #  release="9.0-RELEASE"
+    #  release="9.1-BETA1"
+    #  release="9.1-RC1"
+    #  release="9-STABLE"
+    #  release="9.1-PRERELEASE"
+    #  release="9.1-CURRENT"
+    #  echo "rel1=${release}"
+     
+    # Strip off the release number from in front of the release name
+    # including the - of the -RC. IE: remove  9.0- leaving RC1 
+    # Or in the case of security updates 9.0-RELEASE-p3 leaves p3
+    # Or in the case of normal systems 9.0-RELEASE leaves RELEASE.
+    os_release=${release##*-}
+           
+    case ${os_release} in BETA1|BETA2|BETA3|BETA4|BETA5|BETA6|BETA7) \
+    post_msg "Error: The Host is running a -BETA version."
+    post_msg "There is no binary source available for download."
+    kill "Use option -f ";; esac
+          
+    case ${os_release} in RC1|RC2|RC3|RC4|RC5|RC6|RC7|RC8|RC9|RC10|RC11) \
+    post_msg "Error: The Host is running a -RC version."
+    post_msg "There is no binary source available for download."
+    kill "Use option -f ";; esac
+           
+    case ${os_release} in PRERELEASE|STABLE|CURRENT) \
+    post_msg "Error: The Host is running a ${os_release} version."
+    post_msg "There is no binary source available for download."
+    post_msg "On the Host issue setenv UNAME_r "9.0-RELEASE" or whatever major"
+    post_msg "release is currently available. Then issue the qjail install cmd"
+    post_msg "again to create a clean /etc directory in sharedfs."
+    post_msg "On completion issue qjail update -b cmd to clone the hosts "
+    kill "running libs to sharedfs. Do unsetenv UNAME_r to undo it.";; esac
+               
+    # Remove the security binary patch update version suffix -p3 [if present]. 
+    #  (IE: 9.0-RELEASE-p3)
+    case ${os_release} in p1|p2|p3|p4|p5|p6|p7|p8|p9|p10|p11|p12|p13) \
+    # Strip off the word -RELEASE-p3 leaving 9.0
+    release_number=${release%%-*}
+    release="${release_number}-RELEASE"
+    ;; esac
+  fi      
+          
+  # Starting with the 9.0 release the distribution source has a new format and 
+  # a new directory path to the install source on the FTP server and on the
+  # install .iso file cdrom/dvd. It is now a single archive named base.txz.
+  # The path now has the platform name twice in the path  /i386/i386/
+  # This code only handles the distribution source format for 9.0 and newer.
+  #          
+           
+  # Strip off -RELEASE word leaving just major release number IE: 9.0
+  release_number=${release%%-*}
+             
+  # Replace the . separating 9.0 into 9 0.
+  release_number=`echo -n "${release_number}" | tr '.' ' '`
+             
+  # Concatenate into single number.
+  number=`echo "${release_number}" | awk '{print $1}'`
+  number=${number}`echo "${release_number}" | awk '{print $2}'`
+              
+  if [ ${number} -ge 93 ]; then
+    installarch=`uname -p`
+    installarch="${installarch}/${installarch}"
+  else        
+    post_msg "Error: The Host is running ${release}."
+    post_msg "This qjail version only runs on 9.3-RELEASE or newer."
+    post_msg "It utilizes the jail(8) jail.conf method exclusively."
+    post_msg "qjail version 2.2 is the last version to handle both the pre 9.0"
+    post_msg "and the 9.0 form of install media. qjail version 2.2 is"
+    kill "available from http://sourceforge.net/projects/qjail/files."
+  fi     
+        
+  #    
+  # If the download directory exists, then delete it. 
+  # The download directory gets populated with RELEASE distribution file 
+  # from the FTP download. Then the compressed archive file is un-compressed
+  # populating template with the system directory tree content. Then all the 
+  # executable libraries is copied to populate sharedfs and linked to template
+  # while being deleted from template. The template filesystem is the template 
+  # from which all jail cells are created from.  
+  # The /boot/kernel directory is not used in jails so the /boot directory 
+  # is totally excluded. The usr/ports directory and usr/src directory is not 
+  # populated during the install process but their directories are allocated.        
+         
+  #  Do housekeeping to cleanup and setup for the install.
+  #  Delete the download directory that maybe left over from previous runs.
+            
+  [ -e "${download}" ] && rm -rf "${download}" 
+        
+  # If installing over a existing qjail system then delete old one keeping
+  # any archives, user created flavors and any already created jails.
+        
+  if [ -d "${sharedfs}" ]; then
+     post_msg "Deleting the sharedfs filesystem."
+     rm -rf "${sharedfs}"
+  fi       
+   
+  if [ -d "${template}" ]; then
+     post_msg "Deleting the template filesystem."
+     rm -rf "${template}"
+  fi         
+             
+  # Make copy of qjail default flavors in case user has customized them
+  # followed by deleting them.
+        
+  if [ -d "${flavors_dir}/default" ]; then
+     cp -rf "${flavors_dir}/default" \
+            "${flavors_dir}/users.saved.default"
+     rm -rf "${flavors_dir}/default";
+  fi       
+        
+  if [ -d "${flavors_dir}/ssh-default" ]; then
+     cp -rf "${flavors_dir}/ssh-default" \
+            "${flavors_dir}/users.saved.ssh-default";
+     rm -rf "${flavors_dir}/ssh-default"
+  fi        
+           
+  # Turn on logging of all commands issued > /var/log/qjail.log
+  # If installing over a existing system logging is kept enabled
+  # if it was enabled on the old system.
+  #      
+  if [ -n "${logging}" ]; then
+     if [ -f "${log}" ]; then
+        echo " "
+        post_msg "qjail system logging already enabled."
+        echo " "
+     else         
+        touch "${log}"
+        echo "/var/log/qjail.log                      600  3     100  *     -" \
+        >> /etc/newsyslog.conf
+        echo " "
+        post_msg "qjail system logging enabled."
+        echo " "
+     fi       
+  fi        
+                    
+  #        
+  # Start of logic to process the remote FTP download of the  
+  # RELEASE distribution install file named base.txz. For the 9.x method. 	  
+  #           
+       
+  if [ "${local_install}" != "yes" ]; then
+        
+    mkdir -p "${download}" || kill \
+        "Error: Failed to create download directory."
+             
+    cd "${download}" || kill \
+        "Error: Could not cd to ${download}."
+            
+    path="pub/FreeBSD/releases"
+    ftp_path="${path}/${installarch}/${release}"
+    ftp "${ftp_host}:${ftp_path}/base.txz"
+    if [ $? -ne 0 ]; then
+      post_msg "ftp ${ftp_host}:${ftp_path}/base.txz"
+      kill "Error: Failed to ftp base.txz file."
+    fi         
+                   
+    #   
+    # By this point the download directory has successfully been populated
+    # with the FTP downloaded source file. The following code executes the
+    # 9.x RELEASE install method, which populates the template directory
+    # with a full system directory tree.
+    #
+    mkdir -p "${template}" || kill \
+       "Error: Couldn't create template directory."
+          
+    DESTDIR=${template}
+             
+    mkdir -p "${template}" || kill \
+       "Error: Couldn't create template directory."
+                  
+    DESTDIR=${template}
+         
+    cd "${download}" || kill \
+      "Error: Could not cd to ${download}."
+             
+    echo " "
+    post_msg "The RELEASE distribution files are populating template."
+    post_msg "Est LT 1 minute elapse time for this to complete."
+          
+    xzdec base.txz | tar --unlink -xpJf - -C ${DESTDIR}
+    [ $? -eq 0 ] || kill "Error: RELEASE distribution install failed."
+            
+    rm -rf "${download}"
+  fi     
+         
+  # Process the -f option.
+  # The RELEASE files from the mounted disc1 RELEASE cdrom or 
+  # from a mounted disc1.iso RELEASE file may be used as the source
+  # of the FreeBSD system binaries used to populate the 
+  # /usr/jails/template directory.
+  #         
+              
+  if [ "${local_install}" = "yes" ]; then
+              
+    cd "${install_file_location}" || kill \
+      "Error: Couldn't cd to ${install_file_location}."
+           
+    [ -e "${install_file_location}/base.txz" ] || kill \
+      "Install file not found ${install_file_location}/base.txz"
+            
+    mkdir -p "${template}" || kill \
+       "Error: Couldn't create template directory."
+            
+    DESTDIR=${template}
+             
+    cd "${install_file_location}" || kill \
+      "Error: Couldn't cd to ${install_file_location}."
+             
+    echo " "
+    post_msg "The RELEASE distribution files are populating template."
+    post_msg "Est LT 1 minute elapse time for this to complete."
+               
+    xzdec base.txz | tar --unlink -xpJf - -C ${DESTDIR}
+    [ $? -eq 0 ] || kill "Error: RELEASE distribution install failed."
+  fi            
+            
+           
+  # Selectively populate the sharedfs from the just created template.
+  # This is fall through logic for all cases. 
+  #         
+          
+  # Verify that template exists.
+  cd "${template}" || kill \
+     "Error: Couldn't cd into template directory for populating sharedfs."
+           
+  # All the schg flaged files end up belonging to sharedfs so they really 
+  # have no effect in the jail system. 
+  # Remove them now so they don't cause problems later.
+  chflags -R noschg "${template}"
+  chflags -R nosunlink "${template}"
+ 
+               
+  # sharedfs directory does not exist yet, so allocate the
+  # sharedfs directory.
+  #         
+  mkdir -p "${sharedfs}"
+          
+  # src, ports, are not included in the distribution, so create their 
+  # directories now on sharedfs and add link to them on template so all 
+  # jails share single copy of them.
+  #       
+  rm -r usr/src
+  mkdir -p "${sharedfs}/usr/src"
+  mkdir -p "${sharedfs}/usr/ports"
+  ln -s /sharedfs/usr/src usr/src
+  ln -s /sharedfs/usr/ports usr/ports
+          
+  post_msg " "
+  post_msg "sharedfs is being populated."
+  post_msg "Est LT 1 minute elapse time for this to complete."
+           
+  # Using the dirlist the desired directories are copied to the
+  # sharedfs directory tree and deleted from the template directory tree.
+  #      
+           
+  dirlist="bin lib libexec sbin sys usr/bin usr/include usr/lib "
+  dirlist="${dirlist}usr/libdata usr/libexec usr/sbin usr/share "
+          
+  # amd64 needs some extra libs
+  case `uname -p` in amd64) dirlist="${dirlist} usr/lib32";; esac
+           
+  for dir in ${dirlist}; do
+    find ${dir} | cpio -dmp "${sharedfs}" 1> /dev/null 2>&1 || \
+    kill "Error: Installation of ${dir} failed." 
+    rm -r ${dir}; 
+    ln -s /sharedfs/${dir} ${dir}
+  done
+           
+  # Delete some un-needed stuff to make template smaller.
+  rm -rf "${template}"/boot
+  rm -rf "${template}"/rescue
+  rm -rf "${template}"/usr/games
+          
+  mkdir "${template}"/sharedfs
+  ln -s usr/home "${template}"/home 
+             
+  # If the default archive directory is not allocated yet, do it now.
+  [ -d "${jaildir}/archive" ] || mkdir -p "${archive_dir}"
+            
+  # qjail has 3 definition directories located at /usr/local/etc
+  # These 3 directories are; 
+  #            
+  # "qjail.local" Inside of this directory are files named with the jailname.
+  # Inside the jailname file is the qjail imternal definition and control data.
+  # IF there are zones, the "qjail.local" directory is suffixed with
+  # the zone and are used to segregate the jail's definition records by zone.
+  #             
+  # "qjail.global" has a duplicate copy of every jailname from all zones.
+  # This directory is used by the /usr/local/etc/qjail.bootime script when 
+  # executed at boot time and shutdown to start/stop all the qjail jails. 
+  #            
+  # "qjail.vnet" For vimage vnet jails only this directory has files with
+  # the vnet jailname. Inside the jailname file is the jail(8) definition
+  # startements.
+  #                       
+             
+  # If the global properties directory is not allocated yet, do it now.
+  [ -d "${jaildefs_global}" ] || mkdir -p "${jaildefs_global}"
+           
+  # If the properties directory is not allocated yet, do it now.
+  [ -d "${jaildefs}" ] || mkdir -p "${jaildefs}"
+
+  # If the properties directory is not allocated yet, do it now.
+  [ -d "${jaildefs_vnet}" ] || mkdir -p "${jaildefs_vnet}"
+                 
+  # If the fstabs directory is not allocated yet, do it now.
+  [ -d "${fstab}" ] || mkdir -p "${fstab}"
+                
+  # Copy the default flavor & ssh-default flavor from qjail release example.
+  #       
+  if [ -d "${flavors_dir}" ]; then
+     cp -p -R "${examples}/default" "${flavors_dir}"
+     cp -p -R "${examples}/ssh-default" "${flavors_dir}"
+  else       
+     mkdir -p "${flavors_dir}"
+     cp -p -R "${examples}/default" "${flavors_dir}"
+     cp -p -R "${examples}/ssh-default" "${flavors_dir}"
+  fi       
+               
+  # Populate the default flavor named "default" with files from the host
+  # necessary for a network accessible jail.
+  #        
+  default_flavor="${jaildir}/flavors/default"
+  cp /etc/localtime "${default_flavor}/etc/"
+  cp /etc/resolv.conf "${default_flavor}/etc/"
+             
+  # Populate the default flavor named "ssh-default" with files from the host
+  # necessary for a network accessible jail.
+  #            
+  default_flavor="${jaildir}/flavors/ssh-default"
+  cp /etc/localtime "${default_flavor}/etc/"
+  cp /etc/resolv.conf "${default_flavor}/etc/"
+         
+  # Create the perl link if not all ready done.
+  [ ! -L "${sharedfs}/usr/bin/perl" ] && \
+   ln -s /usr/local/bin/perl "${sharedfs}/usr/bin/perl"
+          
+  echo " "
+  post_msg "Successfully installed qjail system."
+  echo " "          
+exit 0
+}         
+        
+start () {        
+######jjbs######### qjail START / STOP / RESTART ########################
+
+
+  # Clean variables, prevent pollution
+  unset cmdlist qjail list zone
+     
+  # Action is first variable in command list.
+  # Can only be start, stop, restart
+  
+  # Append the input command from the input command line
+  action="$1"
+       
+  shift; while getopts z: arg; do case ${arg} in
+      z) zone=${OPTARG};;
+      ?) badcmd="yes";;
+  esac; done; shift $(( $OPTIND - 1 ))
+              
+  [ "${badcmd}" -a "${action}" = "start" ] && \
+     kill "${syntax_start}"
+              
+  [ "${badcmd}" -a "${action}" = "stop" ] && \
+     kill "${syntax_stop}"
+              
+  [ "${badcmd}" -a "${action}" = "restart" ] && \
+     kill "${syntax_restart}"
+              
+  if [ "${zone}" ]; then
+    jaildir="${jaildir}.${zone}"
+    [ -d "${jaildir}" ] || kill "Error: Un-known zone."
+    jaildefs="${jaildefs}.${zone}"
+    fstab="${fstab}.${zone}"
+  fi           
+                
+  # Save the command line list of jailnames if any
+  cmdlist=$@
+          
+  # Perform the group-prefixing function. 
+  group-prefixing ${cmdlist}
+        
+  # Beginning here the start/stop/restart processing starts
+          
+  # Process the list built by group-prefixing 
+  for qjail in ${list}; do
+                 
+    # Drop all "norun" jails in list.
+    # Remove jailname. leaving norun suffix if present.
+    tjailname="${qjail##*.}"
+    if [ "${tjailname}" = "norun" ]; then
+       post_msg "Bypassed norun status ${qjail}"
+       continue   
+    fi          
+                                    
+    # Check if jail is running.
+    if jls -j ${qjail} > /dev/null 2> /dev/null; then
+      jid="running"
+    else            
+      jid="stopped"
+    fi        
+              
+    # if jail is running and trying to start it, skip it.
+    if [ "${jid}" = "running" -a "${action}" = "start" ]; then
+       post_msg "Jail already running.      ${qjail}"
+       continue
+    fi
+
+    # if jail is not running and trying to stop it, skip it.
+    if [ "${jid}" = "stopped" -a "${action}" = "stop" ]; then
+       post_msg "Jail already stopped.      ${qjail}"
+       continue
+    fi
+
+    # if jail is not running and trying to restart it, skip it.
+    if [ "${jid}" = "stopped" -a "${action}" = "restart" ]; then
+       post_msg "Jail already stopped.      ${qjail}"
+       continue
+    fi           
+                 
+    if [ ! -x "/usr/sbin/jail" ]; then
+       post_msg "Error: Couldn't find /usr/sbin/jail"
+       kill "or its not marked as executable."
+    fi           
+                 
+    # Read the jails definition record populating the environment
+    # variables with the jails values.
+    #
+            
+    read-definition ${qjail}
+              
+                 
+    if [ "${action}" = "stop" -o "${action}" = "restart" ]; then
+                  
+      # If this is a vnet jail then use real definition file
+      # else use internal definition to build real definition
+      #            
+      [ "${vnet}" ] && cat "${jaildefs_vnet}/${jailname}" > "/etc/jail.conf"
+      [ "${vnet}" ] || build_config_def > "/etc/jail.conf"
+                
+      # Close definition file so vnet abends don't trash the file.
+      write-definition "${deffile}"
+                       
+      /usr/sbin/jail -q -f "/etc/jail.conf" -r "${jailname}"
+                
+      if [ $? -ne 0 ]; then
+        post_msg "Error: /usr/sbin/jail failed to stop jail ${jailname}."
+        kill "because of errors in jail.conf file."
+      fi         
+                 
+      pid="/var/run/qjail.${jailname}.pid"
+      rm "${pid}"
+               
+      # If this is image type of jail. close it.
+      if [ -n "${imagetype}" ]; then
+         # unmount and release memory disc.
+         cd /
+         umount "${rootdir}" > /dev/null 2> /dev/null
+         mdconfig -d -u "${imagedevice}" > /dev/null
+         unset imagedevice
+                   
+         # Remove device link (which acts as a lock).
+         devicelink="${rootdir}.device"
+         rm -f "${devicelink}"
+      fi        
+             
+     post_msg "Jail successfully stopped  ${jailname}"
+     write-definition "${deffile}"
+          
+    fi       
+                 
+    if [ "${action}" = "start" -o "${action}" = "restart" ]; then
+                 
+      # If the jail to be started is a image jail, then it has to be mdconfig
+      # and it's directory tree made available for starting by the logic below.
+      #          
+      if [ -n "${imagetype}" ]; then
+                
+        # Open the image jail as directory tree.
+        # Attach the .img file as a memory disk.
+                     
+        imagedevice=`mdconfig -a -t vnode -f "${image}"`
+        [ $? -eq 0 ] || kill \
+          "Error: Failed to 'mdconfig' the image file. ${image}"
+              
+        # Mount the memory disk image.
+        mount "/dev/${imagedevice}" "${rootdir}" || \
+        kill "Error: Couldn't mount memory disk  ${imagedevice}"
+                 
+        # link image device
+        ln -s "/dev/${imagedevice}" "${rootdir}.device"
+      fi       
+                 
+      # If this is a vnet jail then use real definition file 
+      # else use internal definition to build real definition 
+      #
+      [ "${vnet}" ] && cat "${jaildefs_vnet}/${jailname}" > "/etc/jail.conf"
+      [ "${vnet}" ] || build_config_def > "/etc/jail.conf"
+                
+      # Close definition file so vnet abends don't trash the file.
+      write-definition "${deffile}"
+                  
+      # Start the jail now.
+      #
+      /usr/sbin/jail -q -f "/etc/jail.conf" -c
+      if [ $? -ne 0 ]; then
+        post_msg "Error: /usr/sbin/jail failed to start jail ${jailname}."
+        kill "because of errors in jail.conf file."
+      fi           
+                   
+      # Populate the pid with correct value format
+      pid="/var/run/qjail.${jailname}.pid"
+      jid=`jls -j ${jailname} jid`
+      echo ${jid} > "${pid}"
+      chmod 555 "${pid}"
+                 
+      # The one time command to create the ssh jailname user account
+      # gets turned off here so it is only done one time.
+      [ ${poststart_ssh} ] && unset poststart_ssh
+
+      write-definition "${deffile}"
+      post_msg "Jail successfully started  ${jailname}"
+          
+    fi        
+                   
+  done
+exit 0     
+}           
+        
+console () {       
+###########jjbc############# qjail CONSOLE ########################
+      
+  # Clean variables, prevent pollution
+  unset execute_override jailname zone 
+      
+  shift; while getopts e:z: arg; do case ${arg} in
+    e) execute_override=${OPTARG};;
+    z) zone=${OPTARG};;
+    ?) kill "${syntax_console}";;
+  esac; done; shift $(( $OPTIND - 1 ))
+              
+  if [ "${zone}" ]; then
+    jaildir="${jaildir}.${zone}"
+    [ -d "${jaildir}" ] || kill "Error: Un-known zone."
+    jaildefs="${jaildefs}.${zone}"
+    fstab="${fstab}.${zone}"
+  fi
+      
+  jailname=$1
+      
+  # Need jail name of jail to open console for 
+  [ "${jailname}" ] || kill "${syntax_console}"
+        
+  # Check to see if this is a norun jailname.
+  [ -e "${jaildefs}/${jailname}.norun" ] && \
+   kill "Error: This jail name is in norun status. ${jailname}"
+           
+  # Check to see if this is a "manual start" jail.
+  [ -e "${jaildefs}/${jailname}.man" ] && jailname="${jailname}.man"
+                              
+  # Check to see if jailname exists.
+  [ -e "${jaildefs}/${jailname}" ] || \
+   kill "Error: This jail name don't exist. ${jailname}"
+                  
+  # Check if jail is running, if not terminate.
+  if jls -j ${jailname} > /dev/null 2> /dev/null; then
+    # jail is running. 
+    # Start console using override login user name if entered.
+    [ "${execute_override}" ] && \
+      exec jexec ${jailname} ${execute_override}
+             
+    # Start console using default root login.
+    jexec_execute="/usr/bin/login -f root"
+    [ "${execute_override}" ] || \
+     exec jexec ${jailname} ${jexec_execute}
+                
+  else         
+             
+    "Error: Jail is not running & it needs to be. ${jailname}"
+               
+  fi
+      
+exit 0
+}   
+      
+archive () {      
+##jjba###################### qjail ARCHIVE ########################
+            
+  # Clean variables, prevent pollution
+  unset archive archivealljails system 
+           
+  shift; while getopts Asz: arg; do case ${arg} in
+    A) archivealljails="YES";;
+    s) system="YES";;
+    z) zone=${OPTARG};;
+    ?) kill "${syntax_archive}";;
+  esac; done; shift $(( ${OPTIND} - 1 ))
+           
+  if [ "${zone}" ]; then
+    jaildir="${jaildir}.${zone}"
+    [ -d "${jaildir}" ] || kill "Error: Un-known zone."
+    jaildefs="${jaildefs}.${zone}"
+    fstab="${fstab}.${zone}"
+    template="${jaildir}/template"
+    sharedfs="${jaildir}/sharedfs"
+    archive_dir="${jaildir}/archive"
+  fi   
+              
+  # Make backup of qjails internal difinition and control files.
+  if [ "${system}" ]; then
+    [ -d "${archive_dir}/system.bkup" ] && rm -rf "${archive_dir}/system.bkup"
+    mkdir "${archive_dir}/system.bkup"
+    cp -rf /usr/local/etc/qjail* "${archive_dir}/system.bkup/"
+          
+    [ -d "${archive_dir}/pgm.bkup" ] && rm -rf "${archive_dir}/pgm.bkup"
+    mkdir "${archive_dir}/pgm.bkup"
+    cp -rf /usr/local/bin/qjail* "${archive_dir}/pgm.bkup/"
+         
+    exit 0    
+  fi         
+                     
+  # Specifying no jailsnames is only acceptable if archiving all jails
+  [ $# -lt 1 -a -z "${archivealljails}" ] && \
+    kill "${syntax_archive}"
+         
+  # -A flag to archive all the jails can not have jailnames on it 
+  [ $# -gt 0 -a "${archivealljails}" ] && \
+  kill "Syntax Error: Must not specify jailnames on archive -A."
+            
+          
+################ Special routine to archive sharedfs ############ 
+#
+# Create a simple tar archive of the sharedfs
+         
+  if [ "$1" = "sharedfs" -o "$1" = "template" ]; then
+                 
+    # Append archive date and time to sharedfs name as archive identification.
+    archive="${archive_dir}/$1@`date +%Y%m%d%H%M.%S`"
+    full_archive_name="${archive}.tar"
+    rootdir="${jaildir}/$1"
+           
+    if [ "$1" = "sharedfs" ]; then
+      # Sanity check to see if any jails are running.
+      # Using the "jls" command to build list of jail names that are running.
+      #          
+      list=`jls name`
+      if [ "${list}" ]; then
+        # There are jails running. Do they belong to qjail?
+        for qjail in ${list}; do
+          # ignore jail if it don't belong to qjail.
+          myjails="${jaildefs_global}"
+          [ -e "${myjails}/${qjail}" -o  -e "${myjails}/${qjail}.man" ] || \
+            continue
+          # Fall through means running jail belongs to qjail.
+          post_msg "Error: All jails have to be stopped to archive sharedfs."
+          kill "This jail is running. ${qjail}"
+        done
+      fi
+      # No jails running so ok to archive sharedfs or template.
+          
+      rootdir="${jaildir}/$1"
+      date        
+      post_msg "Started archiving sharedfs."
+      post_msg "Est LT 1 minute elapse time for minimum system install."
+      post_msg "sharedfs with sources and ports system may"
+      post_msg "take up to 7 minutes."
+      tar cPf ${full_archive_name} ${rootdir}
+      [ $? -eq 0 ] || kill "Warning: Archiving $1 was not successful."
+      date       
+      post_msg "Successfully archived sharedfs"
+    fi      
+          
+    if [ "$1" = "template" ]; then
+      rootdir="${jaildir}/$1"
+      tar cPf ${full_archive_name} ${rootdir}
+      [ $? -eq 0 ] || kill "Warning: Archiving $1 was not successful."
+      post_msg "Successfully archived template"
+    fi
+           
+  else
+       
+######## Archive ALL and Archive jailnames are handled here  ############
+           
+    # Save the command line list of jailnames if any
+    cmdlist=$@
+         
+    # Perform the group-prefixing function.
+    group-prefixing ${cmdlist}
+         
+    # Process the list built by group-prefixing
+    for qjail in ${list}; do
+         
+      # If jail is still running, bypass archiving it
+      if jls -j ${qjail} > /dev/null 2> /dev/null; then
+        post_msg "Bypassed running jail. ${qjail}" 
+        continue
+      fi  
+          
+      read-definition ${qjail}
+            
+      # If the jail to be archived is a image jail, then it has to be mdconfig
+      # and it's directory tree made available for archiving by the logic below.
+      #              
+      if [ -n "${imagetype}" ]; then
+        # Open the image jail as directory tree.
+        # Attach the .img file as a memory disk.
+                            
+        imagedevice=`mdconfig -a -t vnode -f "${image}"`
+        [ $? -eq 0 ] ||  kill \
+        "Error: Failed to 'mdconfig' the image file. ${image}"
+            
+        # Mount the memory disk image.
+        mount "/dev/${imagedevice}" "${rootdir}" || \
+        kill "Error: Couldn't mount memory disk  ${imagedevice}"
+      fi       
+             
+      #          
+      # At this point any image jails have been opened to it's 
+      # directory tree state. Do the archive process now.
+      #         
+      # The tar command is creating the tar archive file. 
+      # After the archive file has been created you can list the archive files
+      # tar -tf org1-201006011803.26.tar > org1.tarlist and then look at it,
+      # or do a manual restore tar -xf org1-201006011803.26.tar 
+      # using your full archive file name instead of the one shown here.
+      #           
+      # Append archive date and time to jailname as archive identification.
+      #                
+      archive="${archive_dir}/${jailname}@`date +%Y%m%d%H%M.%S`"
+      full_archive_name="${archive}.tar"
+      deffile_global="${jaildefs_global}/${qjail}"
+      deffile="${jaildefs}/${qjail}"
+      ctlfiles="${fstab} ${deffile} ${deffile_global}"
+           
+      tar cPf ${full_archive_name} ${ctlfiles} ${rootdir}
+      [ $? -eq 0 ] || kill \
+      "Warning: Archiving jail ${jailname} was not successful."
+             
+      # Close the image used as source for the archive process.
+      if [ -n "${imagetype}" ]; then
+        release_images keep
+      fi        
+            
+      post_msg "Successfully archived ${jailname}"
+             
+      unset archive 
+          
+      # Close the definition record.
+      write-definition "${deffile}"
+           
+    done      
+  fi        
+exit 0
+}         
+ 
+restore () {       
+##jjbr##################### qjail RESTORE ########################
+        
+  # Clean variables, prevent pollution
+  unset jailname 
+        
+  shift; while getopts sz: arg; do case ${arg} in
+    s) system="YES";;
+    z) zone=${OPTARG};;
+    ?) kill "${syntax_restore}";;
+  esac; done; shift $(( ${OPTIND} - 1 ))
+      
+  if [ "${zone}" ]; then
+    jaildir="${jaildir}.${zone}"
+    [ -d "${jaildir}" ] || kill "Error: Un-known zone."
+    jaildefs="${jaildefs}.${zone}"
+    fstab="${fstab}.${zone}"
+    template="${jaildir}/template"
+    sharedfs="${jaildir}/sharedfs"
+    archive_dir="${jaildir}/archive"
+  fi       
+                  
+  # Restore backup of qjails internal difinition and control files.
+  if [ "${system}" ]; then
+    [ -d "${archive_dir}/system.bkup" ] || Kill "Error: Nothing to restore."
+    cp -rf "${archive_dir}/system.bkup/" /usr/local/etc
+    cp -rf "${archive_dir}/pgm.bkup/" /usr/local/bin
+    exit 0
+  fi
+                 
+  [ $# -eq 0 ] && kill "${syntax_restore}"
+        
+  # Check for group prefix
+  group=$1
+  jailname=$1
+        
+  # Remove the = sign from the i/p value which designates this
+  # as a group prefix if its there
+  group=`echo -n "${group}" | sed 's/=.*$//'`
+        
+  # Determine if this is a prefix request
+  if [ "${jailname}" != "${group}" ]; then
+    post_msg "Error: Group prefix equal sign is invalid in restore processing."
+    kill "Code multiple jailnames on the restore command instead."
+  fi             
+                
+################ Special routine to restore sharedfs
+                 
+  # input value may be full file name
+  # Strip off the everything to the right of the jailname
+  # IE: the -date time suffix if present.
+  fromarchive=$1
+  jailnamet=`echo -n "${fromarchive}" | sed 's/@.*$//'`
+                 
+  if [ "${jailnamet}" = "sharedfs" -o "${jailnamet}" = "template" ]; then
+    if [ "${jailnamet}" = "sharedfs" ]; then
+                 
+      # Sanity check to see if any jails are running.
+      # Using the "jls" command to build list of jail names that are running.
+                
+      list=`jls name`
+      if [ "${list}" ]; then
+        # There are jails running. Do they belong to qjail?
+        for qjail in ${list}; do
+          # ignore jail if it don't belong to qjail.
+          myjails="${jaildefs_global}"
+          [ -e "${myjails}/${qjail}" -o  -e "${myjails}/${qjail}.man" ] || \
+           continue
+          # Fall through means running jail belongs to qjail.
+          post_msg "Error: All jails have to be stopped to restore sharedfs"
+          kill "This jail is running. ${qjail}"
+        done           
+      fi             
+      # No jails running so ok to restore sharedfs
+    fi            
+                     
+    # This is common for both sharedfs and template.     
+    # Go hunt for the most current archive file     
+    unset jailname 
+                 
+    jailname=`echo -n "${fromarchive}" | sed 's/@.*$//'`
+                 
+    # Check if valid full archive name.
+    #            
+    if [ "${jailname}" != "${fromarchive}" ]; then
+      fromarchive="${archive_dir}/${fromarchive}"
+      [ -e "${fromarchive}" ] || \
+        kill "Error: Full archive file name not found. ${fromarchive}"
+    fi           
+                 
+    # jail name only. IE; no full archive file name entered.
+    if [ "${jailname}" = "${fromarchive}" ]; then
+      # Roll through the archive directory looking for the last occurrence
+      # to match the jailname being the most current archive.
+      # IE: Most current archive for the jailname has higher number date
+      # so physically follows the older dated archive files in the
+      # archive directory. The archive file names have a jailname suffixed
+      # with @ followed by the time stamp. roll through the archive directory
+      # ignoring everything to the right of the @
+      #          
+      for archive in "${archive_dir}/${jailname}"@*; do
+        fromarchive=${archive}
+      done        
+                 
+      # If no match found this variable will contain only the path
+      # to the archive directory, so no file found by this test.
+      #          
+      [ -e "${fromarchive}" ] || \
+        kill "Error: No archive file found for ${jailname}"
+    fi           
+                 
+    # At this point the fromarchive holds the full path to the
+    # archive file. Either from being entered with the qjail restore command
+    # or found by the above archive directory search if only the jail name
+    # was entered with the qjail restore command.
+    #            
+                 
+    if [ "${jailnamet}" = "sharedfs" ]; then
+      # If previous saved old sharedfs exists, remove it.
+      if [ -d "${jaildir}"/previous.sharedfs ]; then
+        post_msg "Deleting the previous.sharedfs directory tree."
+        post_msg "Est LT 1 minute elapse time for this to complete."
+        post_msg " "
+        rm -rf "${jaildir}"/previous.sharedfs 
+      fi         
+                             
+      # Save current sharedfs by renaming it previous.sharedfs.
+      mv "${sharedfs}" "${jaildir}"/previous.sharedfs 
+      if [ $? -ne 0 ]; then
+        post_msg "Error: Renaming ${sharedfs} to"
+        kill "${jaildir}/previous.sharedfs failed."
+      fi         
+                 
+      post_msg "Started restoring sharedfs."
+      post_msg "Est LT 1 minute elapse time for sharedfs having a minimum"
+      post_msg "system install. A sharedfs with sources and full ports system"
+      post_msg "may take up to 7 minutes."
+      post_msg " "
+                 
+      # Restore the archive file.
+      tar xf ${fromarchive} -C / > /dev/null 2> /dev/null
+      [ $? -eq 0 ] || \
+        kill "Error: Extract archive failed from ${fromarchive}."
+      post_msg "Successfully restored ${jailname}"
+    fi           
+                 
+    if [ "${jailnamet}" = "template" ]; then
+      # If previous saved old template exists, remove it.
+      if [ -d "${jaildir}"/previous.template ]; then
+        post_msg "Deleting the previous.template directory tree."
+        rm -rf "${jaildir}"/previous.template
+      fi         
+                 
+      # Save current template by renaming it previous.template.
+      mv "${template}" "${jaildir}"/previous.template 
+      if [ $? -ne 0 ]; then
+      post_msg "Error: Renaming ${sharedfs} to"
+      kill "${jaildir}/previous.sharedfs failed."
+      fi         
+                 
+      # Restore the archive file.
+      tar xf ${fromarchive} -C / > /dev/null 2> /dev/null
+      [ $? -eq 0 ] || \
+        kill "Error: Extract archive failed from ${fromarchive}."
+      post_msg "Successfully restored ${jailname}"
+    fi           
+                 
+  else           
+                                   
+    # This is start of normal restore jailname logic. 
+                 
+    # Save the command line list of jailnames
+    cmdlist=$@
+                 
+    # Process the command line list 
+    for fromarchive in ${cmdlist}; do
+                 
+      unset jailname 
+                 
+      # The fromarchive value can be the complete archive file name, 
+      # IE: jailname plus the date and time the archive was made, 
+      # or just the jailname.
+      # jailname only will select the most current archive for that jailname.
+      # Using the full archive file name is how an older archive of many for the 
+      # jailname is selected.
+                 
+      # At this point we don't know if the input value is just jailname or the
+      # full archive file name or if it's correct.
+                  
+      # Check if jailname is in use.
+      # May be full archive file name so strip off time stamp if there
+      #          
+      jailname=`echo -n "${fromarchive}" | sed 's/@.*$//'`
+      deffile="${jaildefs}/${jailname}"
+      [ -e "${deffile}" -o \
+        -e "${deffile}.norun" -o \
+        -e "${deffile}.man" ] && \
+         kill "Error: Can't restore a jail that already exists. ${jailname}"
+                                  
+      # Check if valid full archive name.
+      #          
+      if [ "${jailname}" != "${fromarchive}" ]; then
+        fromarchive="${archive_dir}/${fromarchive}"
+        [ -e "${fromarchive}" ] || \
+          kill "Error: Full archive file name not found. ${fromarchive}"
+      fi         
+                 
+      # jail name only. IE; no full archive file name entered.
+      if [ "${jailname}" = "${fromarchive}" ]; then
+                 
+        # Verify good jailname.       
+        temp_jailname=`echo -n "${jailname}" | tr -c '[:alnum:]-_' _`
+        if [ "${temp_jailname}" != "${jailname}" ]; then
+          post_msg "Invalid jail name"
+          kill "Only underscore, dash and alphanumeric characters are valid."
+        fi       
+                 
+        # Check that the jail name is not all numeric.
+        if expr "${jailname}" : "[0-9]*$" > /dev/null
+          then   
+           kill "Numeric jail names are invalid. Jail name ${jailname}"
+        fi       
+                 
+                            
+        # Roll through the archive directory looking for the last occurrence
+        # to match the jailname being the most current archive. 
+        # IE: Most current archive for the jailname has higher number date 
+        # so physically follows the older dated archive files in the 
+        # archive directory. The archive file names have a jailname suffixed
+        # with @ followed by the time stamp. roll through the archive directory
+        # ignoring everything to the right of the @   
+        #        
+        for archive in "${archive_dir}/${jailname}"@*; do
+          fromarchive=${archive} 
+        done       
+                 
+        # If no match found this variable will contain only the path 
+        # to the archive directory, so no file found by this test.
+        #        
+        [ -e "${fromarchive}" ] || \
+          kill "Error: No archive file found for ${jailname}"
+      fi         
+                 
+      # At this point the fromarchive holds the full path to the
+      # archive file. Either from being entered with the qjail restore command
+      # or found by the above archive directory search if only the jail name
+      # was entered with the qjail restore command.
+      #          
+                 
+      # Restore the archive file. This will populate the jail name filesystem
+      # plus the fstab and deffile definition records.
+      tar xf ${fromarchive} -C / > /dev/null 2> /dev/null
+      [ $? -eq 0 ] || \
+        kill "Error: Extract archive failed from ${fromarchive}."
+                 
+      unset rootdir  
+      # Populate all the variables. Maybe .norun  or .man also.
+      #             
+       read-definition ${jailname} 
+                 
+      # Check restored archive variables have values.
+      if [ -z "${rootdir}" ]; then
+        post_msg "Error: Archive restore has invalid definition file."
+        kill "Some definition parameters are missing values."
+      fi         
+                 
+      # If the directory tree jail just restored is a image jail.  
+      # Rebuild the image directory structure from the directory tree
+      # just restored. Note a image jail is archived as a directory tree.
+      # Also keep in mind that all the variables defining this jail has 
+      # just been restored and populated by the above read-definition.
+      # Just use existing values to create image jail.
+      #          
+      if [ -n "${imagetype}" ]; then
+        # Prep  work variables.
+        restored_rootdir="${rootdir}.restored"
+        mv "${rootdir}" "${restored_rootdir}" 
+                 
+        # Create the build directory.
+        #        
+        mkdir -p "${rootdir}" || \
+         kill "Error: Couldn't create jail mount point. ${rootdir}"
+                 
+        # Create the empty .img file.
+        touch "${image}"
+                 
+        # Create the sparse image file.
+        dd if="/dev/zero" of="${image}" bs=1m count=0 \
+           seek=${imageblockcount} 1> /dev/null 2>&1 
+        if [ $? -ne 0 ]; then
+          release_images
+          kill "Error: Couldn't create the sparse image file. ${image}"
+        fi       
+                 
+        # Attach the .img file as a memory disk.
+        imagedevice=`mdconfig -a -t vnode -f "${image}"`
+        if [ $? -ne 0 ]; then
+          release_images 
+          kill "Error: Failed to 'mdconfig' the sparse image. ${image}"
+        fi        
+                 
+        # Format memory disk image.
+        newfs -U "/dev/${imagedevice}" 1> /dev/null 2>&1 
+        if [ $? -ne 0 ]; then
+          release_images
+          kill "Error: Couldn't newfs the memory disk. ${imagedevice}"
+        fi         
+                    
+        # Mount the memory disk image.
+        mount "/dev/${imagedevice}" "${rootdir}" 
+        if [ $? -ne 0 ]; then
+          release_images
+          kill "Error: Couldn't mount memory disk. ${imagedevice}"
+        fi       
+                 
+        # Copy the contents of the previously built directory tree jail.
+        #                               
+        cd "${restored_rootdir}" 
+        find . | cpio -p "${rootdir}" 1> /dev/null 2>&1
+        if [ $? -ne 0 ]; then
+          release_images
+          kill "Error: Couldn't copy directory tree to image jail. ${rootdir}"
+        fi       
+                  
+        # Release memory disks.
+        release_images keep
+                 
+        # Scratch the directory tree jail freeing up it's jailname.
+        rm -rf "${restored_rootdir}"
+      fi         
+                 
+      # Close the definition file
+      write-definition "${deffile}"
+                 
+      post_msg "Successfully restored ${jailname}"
+                    
+    done         
+  fi             
+exit 0
+}                 
+     
+config () {     
+##jjbf###################### qjail CONFIG ########################
+       
+  # Clean variables, prevent pollution
+  unset setrunnable new_name setAll 
+  unset old_deffile new_ip4 new_ip6 
+       
+  flag_count=0
+        
+  shift; while getopts b:c:f:4:6:n:p:s:w:z:AdhBkKlLmMqQrRvVxXyY arg; \
+   do case ${arg} in
+     b) devfsrules=${OPTARG}; flag_count=$(( $flag_count + 1 ));;
+     c) new_nic=${OPTARG}; flag_count=$(( $flag_count + 1 ));;
+     f) fib=${OPTARG}; flag_count=$(( $flag_count + 1 ));;
+     4) new_ip4=${OPTARG}; flag_count=$(( $flag_count + 1 ));;
+     6) new_ip6=${OPTARG}; flag_count=$(( $flag_count + 1 ));;
+     n) new_name=${OPTARG}; flag_count=$(( $flag_count + 1 ));;
+     p) setcpu=${OPTARG}; flag_count=$(( $flag_count + 1 ));;
+     s) slevel=${OPTARG}; flag_count=$(( $flag_count + 1 ));;
+     w) vvinterface=${OPTARG}; flag_count=$(( $flag_count + 1 ));;
+     z) zone=${OPTARG};;
+     A) setAll="YES";;
+     d) display="YES"; flag_count=$(( $flag_count + 1 ));;
+     h) create_ssh="YES"; flag_count=$(( $flag_count + 1 ));;
+     B) devfsrules="NO"; flag_count=$(( $flag_count + 1 ));;
+     k) rawsockets="YES"; flag_count=$(( $flag_count + 1 ));;
+     K) rawsockets="NO"; flag_count=$(( $flag_count + 1 ));;
+     l) nullfs="YES"; flag_count=$(( $flag_count + 1 ));;
+     L) nullfs="NO"; flag_count=$(( $flag_count + 1 ));;
+     m) man_start="YES"; flag_count=$(( $flag_count + 1 ));;
+     M) man_start="NO"; flag_count=$(( $flag_count + 1 ));;
+     q) quota="YES"; flag_count=$(( $flag_count + 1 ));;
+     Q) quota="NO"; flag_count=$(( $flag_count + 1 ));;
+     r) norun="YES"; flag_count=$(( $flag_count + 1 ));;
+     R) norun="NO"; flag_count=$(( $flag_count + 1 ));;
+     v) vvnet="YES"; flag_count=$(( $flag_count + 1 ));;
+     V) vvnet="NO"; flag_count=$(( $flag_count + 1 ));;
+     x) zfs="YES"; flag_count=$(( $flag_count + 1 ));;
+     X) zfs="NO"; flag_count=$(( $flag_count + 1 ));;
+     y) sysv="YES"; flag_count=$(( $flag_count + 1 ));;
+     Y) sysv="NO"; flag_count=$(( $flag_count + 1 ));;
+     ?) kill "${syntax_config}";;
+  esac; done; shift $(( ${OPTIND} - 1 ))
+                 
+  if [ "${zone}" ]; then
+    jaildir="${jaildir}.${zone}"
+    [ -d "${jaildir}" ] || kill "Error: Un-known zone."
+    jaildefs="${jaildefs}.${zone}"
+    fstab="${fstab}.${zone}"
+  fi     
+                 
+  # Check for no flags set.
+  [ $flag_count -eq 0 ] && kill \
+    "Error: No options coded.\n${syntax_config}" 
+           
+   # Option -n and -4 or -6 require a jailname
+   if [ "${new_name}" -o "${new_ip4}" -o "${new_ip6}" ]; then 
+     if [  $# -eq 0 ]; then
+        kill "Error: Options -n and -4 and -6 require a jailname."
+     fi           
+   fi     
+                        
+  [ "${display}" -a  $# -eq 0 ] && \
+   kill "Error: Option -d requires a jailname."
+            
+  [ "${display}" -a  "${setAll}" ] && \
+   kill "Error: Option -A is not valid when coded with option -d."
+           
+  # -A and -n invaild together.
+  [ "${setAll}" -a "${new_name}" ] && \
+   kill "Error: Option -A is not valid when coded with option -n."
+         
+  # -A and -4 or -6 invaild together.
+  [ "${setAll}" -a "${new_ip4}" -o "${setAll}" -a "${new_ip6}" ] && \
+   kill "Error: Option -A is not valid when coded with option -4 or -6."
+                
+  [ $flag_count -gt 1 ] && \
+  kill "Error: Only 1 option allowed at a time.\n${syntax_config}"  
+         
+  [ $# -eq 0  -a -z "${setAll}" ] && \
+     kill "Error: jailname is required unless -A is coded."
+          
+  if [ -n "${display}" ]; then 
+     man="${jaildefs}/$1.man"
+     norun="${jaildefs}/$1.norun"
+     run="${jaildefs}/$1"
+          
+     if [ -f "${run}" -o -f "${norun}" -o -f "${man}" ]; then
+          
+        [ -f "${jaildefs}/$1.man" ] && \
+        cat "${jaildefs}/$1.man" | more
+
+        [ -f "${jaildefs}/$1.norun" ] && \
+        cat "${jaildefs}/$1.norun" | more 
+               
+        [ -f "${jaildefs}/$1" ] && \
+        cat "${jaildefs}/$1" | more 
+     else
+        kill "Error: Option -d has invalid jailname."
+     fi
+  exit 0
+  fi
+              
+  if [ -n "${new_name}" ]; then
+        
+    old_jailname="$1"
+               
+    temp_jailname=`echo -n "${new_name}" | tr -c '[:alnum:]-_' _`
+    if [ "${temp_jailname}" != "${new_name}" ]; then
+       post_msg "Invalid new jailname"
+       kill "Only underscore, dash and alphanumeric characters are valid."
+    fi
+           
+    # Check that the jail name is not all numeric.
+    if expr "${new_name}" : "[0-9]*$" > /dev/null
+       then
+        kill "Numeric jail names are invalid."
+    fi        
+     
+    # Is newname a reserved name?
+    case ${new_name} in sharedfs|template|archive|flavors) \
+    post_msg "Error: Cannot name the jail ${new_name}."
+    post_msg "The ${new_name} directory name is reserved."
+    kill "Please select an unique jailname."
+    ;; esac
+                 
+    # Check to see if newname exists. 
+    [ -e "${jaildefs}/${new_name}" ] && \
+       kill "Error: New name already exists. ${new_name}"
+                    
+    # Check to see if old name is in norun status.
+    [ -e "${jaildefs}/${old_jailname}.norun" ] && \
+     kill "Error: Can't rename a jail in norun status. ${old_jailname}"
+                    
+    # Check to see if old name is in man status.
+    [ -e "${jaildefs}/${old_jailname}.man" ] && \
+     kill "Error: Can't rename a jail in manual status. ${old_jailname}"
+                     
+    # Check to see if old name exists.
+    [ -e "${jaildefs}/${old_jailname}" ] || \
+     kill "Error: Old jail name does not exist. ${old_jailname}"
+               
+    # Check if jail is running, stop jail first
+    if jls -j ${old_jailname} > /dev/null 2> /dev/null; then
+      kill "Error: Jail is running, it must be stopped. ${old_jailname}"
+    fi           
+                
+    # Read the jails definition record populating the environment
+    # variables with the jails values.
+    read-definition ${old_jailname}
+                
+    # Save some old values
+    old_rootdir="${rootdir}"
+    old_image="${image}"
+    old_fstab="${fstab}"
+    old_deffile="${deffile}"
+    old_jaildefs_global="${jaildefs_global}/${old_jailname}"  
+   
+      
+    # Is the old jail a image jail?
+    if [ "${old_image}" ]; then
+                
+      # Prep the new locations.
+      rootdir="${jaildir}/${new_name}"
+      image="${rootdir}/${new_name}.img"
+      deffile="${jaildefs}/${new_name}"
+      jailname="${new_name}"
+           
+      # Rename the flat image file in it's old location
+      mv "${old_image}" \
+         "${old_rootdir}/${new_name}.img"
+         
+      # Rename the old directory to new directory name
+      mv "${old_rootdir}" "${rootdir}"
+           
+      # Refresh fstab with new directory paths and jailnames.
+      fstab_old_path="${fstab%.*}"
+      fstab="${fstab_old_path}.${new_name}"
+            
+      echo ${sharedfs} ${rootdir}/sharedfs nullfs ro 0 0 > "${fstab}"
+            
+    else    
+           
+      # This is regular directory tree jail
+          
+      # Prep the new locations.
+      rootdir="${jaildir}/${new_name}"
+      deffile="${jaildefs}/${new_name}"
+      jailname="${new_name}"
+       
+      # Rename old jail to new jailname.   
+      mv "${old_rootdir}" "${rootdir}"
+           
+      # Refresh fstab with new directory paths and jailnames.
+      fstab_old_path="${fstab%.*}"
+      fstab="${fstab_old_path}.${new_name}"
+           
+      echo ${sharedfs} ${rootdir}/sharedfs nullfs ro 0 0 > "${fstab}"
+          
+    fi         
+              
+    # Both jail types use same definition deffile update logic.
+    #               
+    write-definition "${deffile}" 
+                
+    # If this is a vnet jail, recreate it's jail.conf file and delte old one.
+    if [ ${vnet} ]; then
+      build_config_def > "${jaildefs_vnet}/${jailname}"
+      rm -f "${jaildefs_vnet}/${old_jailname}"
+    fi         
+           
+    # Delete old definition records.
+    rm -f "${old_fstab}"
+    rm -f "${old_deffile}"
+    rm -f "${old_jaildefs_global}"
+       
+    post_msg "Successfully renamed ${old_jailname} to ${jailname}"
+    exit 0   
+  fi     
+          
+  if [ -n "${new_ip4}" -o -n "${new_ip6}" ]; then
+            
+    jailname="$1"
+                    
+    # Check to see if jailname is in norun status.
+    [ -e "${jaildefs}/${jailname}.norun" ] && \
+     kill "Error: Option -4 -6 invalid for jail in norun status. ${jailname}"
+                     
+    # Check to see if jailname is in man status.
+    [ -e "${jaildefs}/${jailname}.man" ] && \
+     kill "Error: Option -4 -6 invalid for jail in manual status. ${jailname}"
+                   
+    # Check to see if jailname exists.
+    [ -e "${jaildefs}/${jailname}" ] || \
+     kill "Error: This Jail name does not exist. ${jailname}"
+             
+    # Check if jail is running, stop jail first.
+    if jls -j ${jailname} > /dev/null 2> /dev/null; then
+      kill "Error: Jail is running, it must be stopped. ${jailname}"
+    fi           
+              
+    # Check for group prefix
+    group=$1
+               
+    # Remove the = sign from the i/p value which designates this
+    # as a "group prefix", if its there
+    group=`echo -n "${group}" | sed 's/=.*$//'`
+            
+    # Determine if this is a prefix request
+    [ "${jailname}" != "${group}" ] && \
+      kill "Error: Group prefix '='invalid on -4 and -6 option."
+            
+    # Read the jails definition record populating the environment
+    # variables with the jails values.
+    read-definition ${jailname}
+                   
+    # Check if vnet jail, kill if it is.
+    [ -n "${vnet}" ] && \
+      kill "Error: IP address invalid for vnet Jails. ${jailname}"
+                 
+    if [ "${new_ip4}" ]; then
+      ip4="${new_ip4}"
+      #new_ip4="${new_ip4#*|}"
+      new_ip4="${new_ip4%/*}"
+      if [ "${new_ip4}" != "${ip4}" ]; then
+      post_msg "Error Invalid -4 syntax"
+      kill "<ip_address>/<netmask> syntax is not allowed."
+      fi        
+      verify_ip4
+    fi         
+               
+    if [ "${new_ip6}" ]; then
+      ip6="${new_ip6}"
+      #new_ip6="${new_ip6#*|}"
+      new_ip6="${new_ip6%/*}"
+      if [ "${new_ip6}" != "${ip6}" ]; then
+        post_msg "Error Invalid -6 syntax"
+        kill "<ip_address>/<netmask> syntax is not allowed."
+      fi       
+      verify_ip6
+    fi         
+                
+    # Write new definition deffile file from old one
+    write-definition "${deffile}"
+              
+    post_msg "Successful ip change ${jailname}"
+    exit 0          
+  fi         
+         
+  #jjbf1# Start of group prefix processing for options
+  # -a -c -f -i -l -b -B -L -m -M -p -q -Q -r -R -s -v -V -x -X -w -W -y -Y
+  #      
+         
+  # Save the command line list of jailnames if any
+  cmdlist=$@
+           
+  if [ -z "${cmdlist}" -a "${setAll}" ]; then 
+    # Perform the group-prefixing function.
+    group-prefixing ${cmdlist}
+  fi       
+             
+  if [ -n "${cmdlist}" -a -z "${setAll}" ]; then
+    # Perform the group-prefixing function.
+    group-prefixing ${cmdlist}
+  fi
+                
+  # Process the list built by group-prefixing
+  for qjail in ${list}; do
+            
+    # Can not make config changes to jails in "norun" status.
+    # Remove jailname. leaving norun suffix if present.
+    tjailname="${qjail##*.}"
+    [ "${tjailname}" = "norun" -a -z "${norun}" ] && \
+       kill "Can not make config changes to jails in norun status."
+           
+    [ "${tjailname}" = "man" -a -z "${man_start}" ] && \
+       kill "Can not make config changes to jails in manual status."
+           
+    # Check if jail is running, stop jail first.
+    if jls -j ${qjail} > /dev/null 2> /dev/null; then
+      post_msg "Bypassed running jail ${jailname}"
+      continue  
+    fi            
+                
+    # Read the jails definition record populating the environment
+    # variables with the jails values.
+    read-definition ${qjail}
+                 
+    if [ "${man_start}" = "NO" ]; then
+      if [ -e "${jaildefs}/${jailname}.man" ]; then
+        rm "${jaildefs}/${jailname}.man"
+        rm "${jaildefs_global}/${jailname}.man"
+        deffile="${jaildefs}/${jailname}"
+        write-definition "${deffile}"
+        post_msg "Successful set manual status off ${jailname}"
+        continue 
+      else        
+        rm "${jaildefs_global}/${jailname}"
+        # Close the definition record.
+        write-definition "${deffile}"
+        post_msg "Already set to manual status off  ${jailname}"
+        continue 
+      fi          
+    fi            
+                    
+    if [ "${man_start}" = "YES" ]; then
+      if [ -e "${jaildefs}/${jailname}.man" ]; then
+        # Close the definition record.
+        rm "${jaildefs_global}/${jailname}.man"
+        write-definition "${deffile}"
+        post_msg "Already set to manual status on  ${jailname}"
+        continue
+      else       
+        rm "${jaildefs}/${jailname}"
+        rm "${jaildefs_global}/${jailname}"
+        deffile="${jaildefs}/${jailname}.man"
+        write-definition "${deffile}"
+        post_msg "Successful set manual status on ${jailname}"
+        continue
+      fi          
+    fi              
+                    
+    if [ "${norun}" = "NO" ]; then
+      if [ -e "${jaildefs}/${jailname}.norun" ]; then
+        rm "${jaildefs}/${jailname}.norun" 
+        rm "${jaildefs_global}/${jailname}.norun" 
+        deffile="${jaildefs}/${jailname}"
+        write-definition "${deffile}"
+        post_msg "Successful removed norun status ${jailname}"
+        continue
+      else   
+        rm "${jaildefs_global}/${jailname}"
+        # Close the definition record.
+        write-definition "${deffile}"
+        post_msg "Already set to norun status ${jailname}"
+        continue
+      fi
+    fi   
+           
+    if [ "${norun}" = "YES" ]; then
+      if [ -e "${jaildefs}/${jailname}.norun" ]; then
+        # Close the definition record.
+        rm "${jaildefs_global}/${jailname}.norun"
+        write-definition "${deffile}"
+        post_msg "Already set to norun status ${jailname}"
+        continue
+      else   
+        rm "${jaildefs}/${jailname}"
+        rm "${jaildefs_global}/${jailname}"
+        deffile="${jaildefs}/${jailname}.norun"
+        write-definition "${deffile}"
+        post_msg "Successful set norun status ${jailname}"
+        continue
+      fi  
+    fi    
+                
+    if [ "${vvnet}" = "YES" ]; then
+              
+      # No image vnet jails allowed. Note image/vnet jails do work.
+      #
+      if [ -n "${imagetype}" ]; then
+        echo " "
+        post_msg "Error: Since vimage jails abend so often, image jails"
+        post_msg "would be left in an open state which would take manual"
+        post_msg "editing of its internal definition and control file to"
+        post_msg "correct things so it will work again."
+        post_msg "So for time being image vnet jails are NOT allowed."
+        post_msg "This is a image type jail and for now"
+        post_msg "vnet jails have to be directory type jails."
+        write-definition "${deffile}"
+        continue
+      fi
+
+      size=`echo "${jailname}" | wc -m`
+      if [ "${size}" -gt 13 ]; then
+        post_msg "Error: jail name size exceeds the 12 character maximum"
+        post_msg "for vnet jail names."
+        kill     "Use config -n to rename this vnet jail ${jailname}"
+      fi             
+                    
+      if [ -z "${vnet_interface}" ]; then
+        echo " "           
+        post_msg "The vnet interface -w option has to be populated first"
+        post_msg "with the device name of the physical interface facing"
+        post_msg "the public internet or the private LAN."
+        write-definition "${deffile}"
+        continue
+      fi
+                   
+      ############## Start firewall selection logic ***************
+      echo " "
+      post_msg "At this time only ipfw firewall is vimage aware and can"
+      post_msg "run on the host and in the vnet jail at the same time."
+      post_msg " "
+      post_msg "Chose by entering "ipfw" or "none" and pressing the enter key."
+                   
+      read answer     
+                   
+#     if [ "${answer}" = "ipfw" -o "${answer}" = "none" -o \
+#          "${answer}" = "pf" -o "${answer}" = "ipfilter" ]; then
+                              
+      if [ "${answer}" = "ipfw" -o "${answer}" = "none" ]; then
+                
+        if [ "${answer}" = "ipfw" ]; then
+                         
+          # Chech to see if selected firewall kernel modules have been loaded.
+          if ! kldstat -v | grep -qw ${answer}; then
+            post_msg "Error: ${answer} is not compiled into the kernel and needs to be."
+            write-definition "${deffile}"
+            continue         
+          fi               
+                      
+          etc_dir="${jaildir}/${jailname}/etc"
+          rc_conf="${etc_dir}/rc.conf"
+          echo " " >> "${rc_conf}"
+          echo "gateway_enable=\"YES\"" >> "${rc_conf}"
+          echo "firewall_enable=\"YES\"" >> "${rc_conf}"
+          echo "firewall_logging=\"YES\"" >> "${rc_conf}"
+          echo "firewall_script=\"/etc/ipfw.rules\"" >> "${rc_conf}"
+          cp "${examples}/vnet/ipfw.rules.vnet" "${etc_dir}/ipfw.rules"
+#         echo ${rootdir}/dev ${rootdir}/dev devfs ro 0 0 >> "${fstab}"
+        fi          
+                  
+                      
+        if [ "${answer}" = "pf" ]; then
+          ####### This stub in not usable.
+          ####### Ready for when pf becomes vnet aware.
+          # Chech to see if selected firewall kernel modules have been loaded.
+          if ! kldstat -v | grep -qw ${answer}; then
+            post_msg "Error: ${answer} was not compiled into the kernel."
+            write-definition "${deffile}"
+            continue           
+          fi                   
+                          
+          etc_dir="${jaildir}/${jailname}/etc"
+          rc_conf="${etc_dir}/rc.conf"
+          echo " " >> "${rc_conf}"
+          echo "pf_enable=\"YES\"" >> "${rc_conf}"
+          echo "pflog_enable=\"YES\"" >> "${rc_conf}"
+#         echo "ftpproxy_enable=\"YES\"" >> "${rc_conf}"
+          echo "pf_rules=\"/etc/pf.rules\"" >> "${rc_conf}"
+          cp "${examples}/vnet/pf.rules.vnet" "${etc_dir}/pf.rules"
+          echo ${rootdir}/dev ${rootdir}/dev devfs ro 0 0 >> "${fstab}"
+        fi         
+                   
+        if [ "${answer}" = "ipfilter" ]; then
+          ####### This stub in not usable. 
+          ####### Ready for when ipfilter becomes vnet aware.
+          # Chech to see if selected firewall kernel modules have been loaded.
+          if ! kldstat -v | grep -qw ${answer}; then
+            post_msg "Error: ${answer} was not compiled into the kernel."
+            write-definition "${deffile}"
+            continue
+          fi
+          etc_dir="${jaildir}/${jailname}/etc"
+          rc_conf="${etc_dir}/rc.conf"
+          echo " " >> "${rc_conf}"
+          echo "ipfilter_enable=\"YES\"" >> "${rc_conf}"
+          echo "ipmon_enable=\"YES\"" >> "${rc_conf}"
+          echo "ipmon_flags=\"-D\"" >> "${rc_conf}"
+          echo "ipfilter_rules=\"/etc/ipf.rules\"" >> "${rc_conf}"
+          cp "${examples}/vnet/ipf.rules.vnet" "${etc_dir}/ipf.rules"
+          answer="ipf"
+        fi            
+                   
+      else         
+        post_msg "Invalid value entered. Valid values are ipfw and none."
+        write-definition "${deffile}"
+        continue          
+      fi             
+      ############## End of firewall selection logic *******************
+               
+               
+      ############## Start network configuration selection logic *******
+                   
+      echo " "         
+      post_msg "There are two network configuration methods available for"
+      post_msg "connecting this vnet/vimage jail to the public internet."
+      post_msg "The bridge/epair method and the netgraph method."
+      post_msg "Chose which network method you want this vimage jail to use"
+      post_msg "by entering [ be ] for bridge/epair or [ ng ] for netgraph"
+      post_msg "and pressing the enter key."
+                      
+      read answer2       
+                       
+      if [ "${answer2}" = "be" -o "${answer2}" = "ng" ]; then
+                        
+        if [ "${answer2}" = "be" ]; then
+          answer="${answer2}|${answer}"
+        fi            
+                     
+        if [ "${answer2}" = "ng" ]; then
+          answer="${answer2}|${answer}"
+        fi             
+                     
+      else           
+        post_msg "Invalid value entered. Valid values are [be] or [ng]."
+        write-definition "${deffile}"
+        continue       
+      fi             
+      ############## End of network configuration selection logic ******
+                 
+      vnet="${answer}"
+
+      unset ip4 ip6 nic_devicename
+      unset securelevel cpuset fib rsockets quotas nullfs zfs poststartssh
+      build_config_def > "${jaildefs_vnet}/${jailname}"
+      write-definition "${deffile}"
+      post_msg "Successfully enabled vnet for ${jailname}"
+      continue
+    fi         
+             
+    if [ "${vvnet}" = "NO" ]; then
+      unset vnet
+      rm "${jaildefs_vnet}/${jailname}"
+      write-definition "${deffile}"
+      post_msg "Successfully disabled vnet for ${jailname}"
+      continue
+    fi           
+                  
+    if [ "${vvinterface}" = "null" ]; then
+      unset vnet_interface
+      write-definition "${deffile}"
+      post_msg "Successfully disabled vnet_interface for ${jailname}"
+      continue
+    fi         
+                
+    if [ -n "${vvinterface}" ]; then
+      # Verify the entered interface device name really exists.
+      nic_name=`ifconfig | grep -m 1 ${vvinterface} | cut -f 1 -d :`
+      if [ -z ${nic_name} ]; then
+        write-definition "${deffile}"
+        post_msg "Entered -w interface device name is not valid."
+        continue         
+      else             
+        vnet_interface="${vvinterface}"
+        write-definition "${deffile}"
+        post_msg "Successfully enabled vnet.interface for ${jailname}"
+        continue
+      fi          
+    fi        
+               
+    # Check if vnet jail, bypass if it is.
+    if [ -n "${vnet}" ]; then
+      post_msg "Error: This config change not allowed on vnet Jail. ${jailname}"
+      write-definition "${deffile}"
+      continue
+    fi       
+                   
+    if [ "${new_nic}" ]; then
+      # Replace old nic with new nic
+      nic_devicename="${new_nic}"
+      # Write new definition deffile file from old one
+      write-definition "${deffile}"
+      post_msg "Successful nic change for ${jailname}"
+      continue       
+    fi           
+              
+    if [ -n "${create_ssh}" ]; then
+      one_time_ssh
+      # Write new definition deffile file from old one
+      write-definition "${deffile}"
+      post_msg "Successful ssh enable for ${jailname}"
+      continue    
+    fi         
+              
+    if [ "${rawsockets}" = "YES" ]; then
+      allow_raw_sockets="allow.raw_sockets"
+      write-definition "${deffile}"
+      post_msg "Successful enabled allow.raw_sockets for ${jailname}"
+      continue
+    fi          
+          
+    if [ "${rawsockets}" = "NO" ]; then
+      unset allow_raw_sockets       
+      write-definition "${deffile}"
+      post_msg "Successful disabled allow.raw_sockets for ${jailname}"
+      continue
+    fi     
+           
+    if [ -n "${devfsrules}" ]; then
+      if [ "${devfsrules}" = "NO" ]; then
+        unset devfs_ruleset_number
+        write-definition "${deffile}"
+        post_msg "Successfully disabled devfs_ruleset for ${jailname}"
+        continue  
+      else       
+        # Check that the value is a positive integer
+        if [ "${devfsrules}" -ge 0 2> /dev/null ]; then
+          if [ ! "$(devfs rule showsets | grep ${devfsrules})" ]; then
+            post_msg "Error; devfs_ruleset # ${devfsrules} does not exist."
+            post_msg "It must first be defined in the hosts /etc/devfs.rules."
+            kill "Type 'man devfs.rules' for more information."
+          fi       
+                  
+          devfs_ruleset_number="${devfsrules}"
+          write-definition "${deffile}"
+          post_msg "Successfully enabled devfs_ruleset for ${jailname}"
+          continue    
+        else     
+          post_msg "Error: devfs_rulset must be a positive number IE; 10"
+          post_msg "and defined in the hosts /etc/devfs.rules file."
+          kill     "Type 'man devfs.rules' for more information."
+        fi       
+      fi         
+    fi           
+                  
+    if [ "${sysv}" = "YES" ]; then
+      allow_sysvipc="allow.sysvipc"
+      write-definition "${deffile}"
+      post_msg "Successfully enabled allow.sysvipc for ${jailname}"
+      continue    
+    fi          
+                
+    if [ "${sysv}" = "NO" ]; then
+      unset allow_sysvipc       
+      write-definition "${deffile}"
+      post_msg "Successfully disabled allow.sysvipc for ${jailname}"
+      continue    
+    fi          
+                     
+    if [ "${quota}" = "YES" ]; then
+      allow_quotas="allow.quotas"
+      write-definition "${deffile}"
+      post_msg "Successful enabled allow.quotas for ${jailname}"
+      continue    
+    fi          
+                
+    if [ "${quota}" = "NO" ]; then
+      unset allow_quotas
+      write-definition "${deffile}"
+      post_msg "Successful disable allow.quotas for ${jailname}"
+      continue   
+    fi          
+                
+    if [ "${nullfs}" = "YES" ]; then
+      allow_mount_nullfs="allow.mount.nullfs"
+      write-definition "${deffile}"
+      post_msg "Successfully enabled allow.mount.nullfs for ${jailname}"
+      continue     
+    fi           
+                   
+    if [ "${nullfs}" = "NO" ]; then
+      unset allow_mount_nullfs
+      write-definition "${deffile}"
+      post_msg "Successfully disabled allow.mount.nullfs for ${jailname}"
+      continue
+    fi           
+                  
+    if [ "${zfs}" = "YES" ]; then
+      allow_mount_zfs="allow.mount.zfs"
+      write-definition "${deffile}"
+      post_msg "Successfully enabled allow.mount.zfs for ${jailname}"
+      continue
+    fi           
+           
+    if [ "${zfs}" = "NO" ]; then
+      unset allow_mount_zfs
+      write-definition "${deffile}"
+      post_msg "Successfully disabled allow.mount.zfs for ${jailname}"
+      continue
+    fi           
+                   
+    if [ "${fib}" = "null" ]; then
+      unset exec_fib
+      write-definition "${deffile}"
+      post_msg "Successfully disabled exec.fib for ${jailname}"
+      continue      
+    fi            
+          
+    if [ -n "${fib}" ]; then
+      if expr "${fib}" : "[0-9]*$" > /dev/null
+        then
+          exec_fib="${fib}"
+          write-definition "${deffile}"
+          post_msg "Successfully enabled exec.fib for ${jailname}"
+          continue
+        else
+          kill "Error: Option -f requires a numeric value."
+        fi         
+    fi          
+            
+    if [ "${setcpu}" = "null" ]; then
+      unset cpuset_id
+      write-definition "${deffile}"
+      post_msg "Successfully disabled cpuset.id for ${jailname}"
+      continue
+    fi           
+               
+    if [ -n "${setcpu}" ]; then
+      if expr "${setcpu}" : "[0-9]*$" > /dev/null
+        then
+          cpuset_id="${setcpu}"
+          write-definition "${deffile}"
+          post_msg "Successfully enabled cpuset.id for ${jailname}"
+          continue
+        else
+          kill "Error: Option -p requires a numeric value."
+      fi       
+    fi          
+               
+    if [ "${slevel}" = "null" ]; then
+      unset securelevel
+      write-definition "${deffile}"
+      post_msg "Successfully disabled securelevel for ${jailname}"
+      continue
+    fi          
+                
+    if [ -n "${slevel}" ]; then
+      if expr "${slevel}" : "[0-9]*$" > /dev/null
+      then         
+        securelevel="${slevel}"
+        write-definition "${deffile}"
+        post_msg "Successfully enabled securelevel for ${jailname}"
+        continue
+      else         
+        kill "Error: Option -s requires a numeric value."
+      fi         
+    fi               
+                        
+  done            
+exit 0            
+}               
+            
+help () {     
+########jjbh################ qjail HELP ########################
+      
+  manpage=$2
+  [ ${manpage} ] && exec man 8 qjail
+     
+  echo -e "${syntax_commands}"
+  echo " "
+  echo -e "${syntax_install}"
+  echo -e "${syntax_create}"
+  echo -e "${syntax_list}"
+  echo -e "${syntax_console}"
+  echo -e "${syntax_archive}" 
+  echo -e "${syntax_delete}"
+  echo -e "${syntax_restore}"
+  echo -e "${syntax_config}"
+  echo -e "${syntax_update}"
+  echo -e "${syntax_start}"
+  echo -e "${syntax_stop}"
+  echo -e "${syntax_restart}"
+  echo -e "${syntax_help}"
+exit 0
+}      
+ 
+#############################
+# End of function definitions.
+#
+
+# This is the beginning of the script processing.
+# Just word qjail entered
+if [ $# -eq 0 ]; then
+  post_msg "${syntax_commands}"
+  post_msg "${syntax_install}"
+  post_msg "${syntax_create}"
+  post_msg "${syntax_list}"
+  post_msg "${syntax_console}"
+  post_msg "${syntax_archive}"
+  post_msg "${syntax_delete}"
+  post_msg "${syntax_restore}"
+  post_msg "${syntax_config}"
+  post_msg "${syntax_update}"
+  post_msg "${syntax_start}"
+  post_msg "${syntax_stop}"
+  post_msg "${syntax_restart}"
+  post_msg "${syntax_logmsg}"
+  post_msg "${syntax_help}"
+  kill " "
+fi
+
+if [ "$( id -u )" != "0" ]; then
+   echo "qjail must be run by root."
+   exit 2
+fi
+
+if [ "`sysctl -n kern.securelevel`" -gt 0 ]; then
+   post_msg "Error: The host is running in a secure level higher than 0."
+   kill "Reboot the host into a lower secure level."
+fi
+
+# Write activity record to qjail log at host's /var/log directory
+# if the /var/log/qjail.log file is there.
+#
+if [ -f "${log}" ]; then
+   log_record="`date +%Y%m%d%H%M.%S`*`whoami`*$*"
+   echo "${log_record}" >> "${log}"
+fi
+
+# Check that the first word after "qjail" is a sub-command.
+subcommand="$1"
+
+[ "${subcommand}" = "start" ]   && start   $*  && exit 0
+[ "${subcommand}" = "stop" ]    && start   $*  && exit 0
+[ "${subcommand}" = "restart" ] && start   $*  && exit 0
+[ "${subcommand}" = "list" ]    && list    $*  && exit 0
+[ "${subcommand}" = "create" ]  && create  $*  && exit 0
+[ "${subcommand}" = "delete" ]  && delete  $*  && exit 0
+[ "${subcommand}" = "archive" ] && archive $*  && exit 0
+[ "${subcommand}" = "restore" ] && restore $*  && exit 0
+[ "${subcommand}" = "config" ]  && config  $*  && exit 0
+[ "${subcommand}" = "console" ] && console $*  && exit 0
+[ "${subcommand}" = "install" ] && install $*  && exit 0
+[ "${subcommand}" = "update" ]  && update  $*  && exit 0
+[ "${subcommand}" = "logmsg" ]  && logmsg  $*  && exit 0
+[ "${subcommand}" = "help" ]    && help    $*  && exit 0
+[ "${subcommand}" ] &&  kill "${syntax_commands}"
+
+################ End of Sub-command logic #########
+
+

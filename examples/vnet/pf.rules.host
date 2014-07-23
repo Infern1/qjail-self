@@ -1,0 +1,10 @@
+
+oif="rl0"
+
+#oif = "xxx"               # oif is the macro name for the
+                           # NIC facing the public internet
+
+set skip on lo0           # No restrictions on Loopback Interface
+
+pass log (all) quick on $oif all
+

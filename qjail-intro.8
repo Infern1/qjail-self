@@ -1,0 +1,151 @@
+.Dd July 22, 2013
+.Dt quail-intro 8 USD
+.Os
+.Sh NAME
+.Nm qjail-intro
+.Nd Introduction to chroot directory tree, jails, and qjail.
+.Sh DESCRIPTION
+.hy 0
+Qjail [ q = quick ] is a \fB4th generation\fR wrapper for the basic chroot jail 
+system that includes security and performance enhancements. Plus a new 
+level of \fB"user friendliness"\fR enhancements dealing with deploying large 
+jail environments, 100's of jails. Qjail requires no knowledge of the 
+jail command usage.  
+.Sh OVERVIEW
+.hy 0
+The original FreeBSD developers felt the need for a method to restrict a 
+processes access to the host system resources so if it becomes 
+compromised the host system is protected from also being compromised. 
+They achieved this goal with the "chroot" command which was in the 
+original 4.4BSD system, from which the current FreeBSD RELEASE is a 
+direct descendant. This \fBfirst generation\fR "chroot" environment, made it
+look like the named directory was the "root" IE starting point; of a 
+system directory tree. Just like "/" is to FreeBSD. In this basic 
+incarnation, the directory tree would just have the binaries necessary to
+form a environment for a single application such as apache web server.
+You could have multiple such "chroot" environments. They all shared the 
+hosts network and disk space. This trait continues into today's jail 
+systems. As you can imagine, occupants of these basic "chroot's" 
+influenced users to stay at the RELEASE they were at because of the size 
+of the task to redevelop them under a new RELEASE mixture of binaries. 
+Jail deployments greater than two were uncommon.
+.Pp
+The jail utility appeared in FreeBSD 4.0. With this \fBsecond generation\fR 
+"chroot" enhancement came the renaming of a "chroot" environment to a 
+"jail', the ability to assign IP address to a jail, auto starting jails
+at boot time, and a general shift in thought about the occupant of the 
+jail. The customized streamline apache web server jail that had no way 
+too be easily configured, progressed into a complete clone of the 
+operating system with all the customizing options one is familiar with on 
+the host. The major shortcoming of this type jail system is each jail 
+has its own copy of the running system binaries. FreeBSD reserves a 
+limited number of control structures for storing files and directories, 
+called \fBinodes\fR. Creating a few jails consumes many of those valuable 
+inodes, eventually preventing the creation of new jails. Worse yet is 
+each jail loads its own copy of the running binaries into memory, which 
+causes thrashing on the swap device as memory pages are swapped in and 
+out as the limited memory is shared between the host and the jails. Besides 
+consuming resources and creating performance degradation, this also 
+causes a major administration headache when wanting to update the host 
+running system, because the host and the jails have to be running the 
+same version of the binaries. Jail deployments greater that four were 
+uncommon.
+.Pp
+Then about RELEASE 5.4 the creative use of the nullfs command added the 
+ability for jails to share a single set of the running binaries between 
+all the jails. This \fBthird generation\fR solution solved the performance 
+problems of the second generation, but had its own problems. Setting up
+a nullfs running binaries environment to support multiple jails was a 
+undocumented manual one. Plus a second type of jail became available
+called an "image". The image jail introduced the ability to predefine the 
+amount of disk space a jail could consume. This was accomplished with the 
+mdconfig command, which mounts a flat file as a directory tree. Jail 
+deployments greater than 10 were uncommon. The administration of this jail 
+system type became increasing difficult with each newly added jail. 
+.Pp
+During FreeBSD RELEASE 8.0, "qjail" was introduced which is a wrapper 
+that camouflages the underlying "jail" commands and automates those 
+manual setup steps into a single command. Mounting a directory tree 
+containing the running binaries as read-only files using "nullfs" became 
+the method forming the basic design of the "qjail" jail system. The 
+functions necessary to manage jails were condensed into the following 
+commands, "install" for installing an pristine copy of the RELEASE 
+version of FreeBSD, the "create" command to create both directory tree 
+type jails and sparse image type jails. This includes the ability to 
+assign IP address with their network device name, so aliases are auto 
+created on jail start and auto removed on jail stop. An archived seed 
+jail pre-configured with ports can be used as the template to form new 
+jails. To make the deployment of many jails with the same configuration, 
+jails can be auto duplicated while at the same time incrementing the last 
+octal of the IP address. The archive, restore and delete commands are 
+commonly understood functions. The "update" command for using the 
+portsnap command to populate a complete ports tree, and the ability to 
+copy the host's running binaries after a host RELEASE upgrade. A "list" 
+command to display the qjail jail status. The "config" command can flag a 
+jail as "norun" to exclude it from being auto started at boot time. The 
+"norun" status can be toggled back and forth on a single jail or all 
+jails at once. Jails can be renamed and their IP address changed.
+.Pp
+Qjail deploys two different jail types. The first type is based on a 
+Directory tree. This type has unlimited disk space growth potential,it 
+shares the host's disk space. The jail will never run out of space until 
+the host does. The second type is based on a sparse image file. A sparse 
+file is one that occupies only the sum size of its contents, not its 
+allocation size. IE; a sparse file allocated size of 5M, but only having 
+7 files, each 1k in size, only occupies 7k of physical disk space. As 
+content is added, additional physical disk space is occupied up to the 5M 
+allocation ceiling. The sparse file is mounted as a memory disk using the 
+mdconfig command and populated with the directory tree content of a jail. 
+This configuration is called a sparse image jail. It's major benefits is 
+it provides a way to put a hard limit on the maximum amount of disk space 
+a jail can consume. This provides an addition level of protection to the 
+host from intentional or unintentional run-a-way processes inside of a 
+jail consuming disk space until the host system dies.
+.Pp
+But by far "qjail" greatest achievement to the advancement of jailed 
+systems, is the addition of "user-friendliness" that simplifies the 
+management of large deployments of hundreds of jails. This enhancement 
+adds the ability to designate a portion of the jail name as a group 
+prefix so the command being executed will apply to only those jail names 
+matching that prefix. A simple jail naming convention allows the grouping 
+of like function jails together. The other advancement is the ability to 
+create different "zones" consisting of identical jail systems each with 
+their own groups of jails.
+.Pp
+Qjail reduces the complexities of large jail deployments to the novice 
+level. Qjail has a fully documented manpage, which is a rarity in the 
+FreeBSD world. Details are given to facilitate the use of qjail's 
+capabilities to the fullest extent possible.
+.Sh "QJAIL SYSTEM" 
+.hy 0
+The qjail system is comprised of four components, qjail, qjail2, 
+qjail.conf, and qjail-jail2.
+.Pp
+\fBqjail\fR is the main workhorse utility. It's located at 
+/usr/local/bin/qjail.It can install the qjail environment, create new 
+jails, archive, restore, delete and update jails, open a jail console, 
+and list the status of all the jails. See qjail(8) for complete usage 
+details.
+.Pp
+\fBqjail.conf\fR contains qjail environment defaults. In most cases the 
+defaults do not need changing. It's recommended to use the defaults. The 
+defaults are hard coded in the qjail code. The \fBqjail.conf\fR file as 
+delivered is located at \fB/usr/local/etc/qjail.conf.sample\fR and is not 
+required for the qjail system to run. To make a permanent override to the 
+defaults, you first must remove the .sample suffix.   
+.Pp
+\fBqjail2\fR script is located at /usr/local/etc/rc.d/qjail2. It's main purpose
+is to start and stop jails when called by qjail. In addition it can auto 
+start all the jails at boot time. Adding \fBqjail_enable="YES"\fR to 
+\fB/etc/rc.conf\fR will activate it.
+.Pp
+\fBqjail-jail2\fR script is located at /usr/local/etc/rc.d/qjail-qjail2. It's 
+a clone of /etc/rc.d/jail that's been modified to display the 
+"started/stopped" console messages for large number of jails. It's called
+by the qjail2 script.
+.Pp
+.Sh "SEE ALSO"
+qjail(8),  qjail-howto,  jail(8),  mount_nullfs(8),   mdconfig(8) 
+.Sh AUTHOR
+.An Joe Barbish 
+.Aq qjail@a1poweruser.com

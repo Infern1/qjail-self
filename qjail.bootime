@@ -1,0 +1,361 @@
+#!/bin/sh
+# This script exclusively uses the /etc/jail.conf file method instead 
+# of the rc.d-method.
+#
+# qjail_enable -> coded in /etc/rc.conf enables this script at boot time.
+# This file must have execute permission "chmod 555 qjail-bootime" to work.
+#
+# The jail_stop routine will only get executed if the host 
+# is issued the "shutdown now" command. 
+# Using the reboot & halt commands just terminates all jails. 
+# This may damage data bases running inside of jails. 
+# Also the jid in the definition record retains the jid number which will
+# flag that jail as running when its really not if this in not run at boot. 
+
+# PROVIDE: qjail
+# REQUIRE: LOGIN cleanvar
+# BEFORE: securelevel
+# KEYWORD: nojail shutdown
+          
+. /etc/rc.subr
+rcvar="qjail_enable"         
+name=qjail
+load_rc_config ${name}
+         
+qjail_enable=${qjail_enable:-"NO"}
+          
+start_cmd="jail_start"
+stop_cmd="jail_stop"
+                
+# Define the kill shortcut
+kill () {
+  echo -e "$*"
+  exit 1
+}       
+        
+read-definition () {
+
+# Read the jails definition record /usr/local/etc/qjail.local/jailname
+# populating the environment variables with the jails values.
+
+  jail_name=$1
+
+  # Clean variables, prevent pollution.
+  unset jailname ip4 ip6 rootdir
+  unset nic_devicename fstab securelevel cpuset_id
+  unset exec_fib vnet vnet_interface allow_raw_sockets
+  unset allow_quotas allow_mount_nullfs allow_mount_zfs
+  unset devicelink device device_md_number
+  unset deffile jid poststart_ssh
+  unset image imagetype
+
+  [ -e "${jaildefs}/${jail_name}" ] && \
+       deffile="${jaildefs}/${jail_name}"
+  [ -e "${jaildefs}/${jail_name}.norun" ] && \
+       deffile="${jaildefs}/${jail_name}.norun"
+  [ -e "${jaildefs}/${jail_name}.man" ] && \
+       deffile="${jaildefs}/${jail_name}.man"
+
+  [ -z "${deffile}" ] && kill "No definition record found."
+
+  . "${deffile}"
+
+  eval jailname=\"\${name}\"
+  eval ip4=\"\${ip4}\"
+  eval ip6=\"\${ip6}\"
+  eval rootdir=\"\${path}\"
+  eval nic_devicename=\"\${interface}\"
+  eval fstab=\"\${fstab}\"
+  eval securelevel=\"\${securelevel}\"
+  eval cpuset_id=\"\${cpuset}\"
+  eval exec_fib=\"\${fib}\"
+  eval vnet=\"\${vnet}\"
+  eval vnet_interface=\"\${vinterface}\"
+  eval allow_raw_sockets=\"\${rsockets}\"
+  eval devfs_ruleset_number=\"\${ruleset}\"
+  eval allow_sysvipc=\"\${sysvipc}\"
+  eval allow_quotas=\"\${quotas}\"
+  eval allow_mount_nullfs=\"\${nullfs}\"
+  eval allow_mount_zfs=\"\${zfs}\"
+  eval poststart_ssh=\"\${poststartssh}\"
+  eval deffile=\"\${deffile}\"
+  eval image=\"\${image}\"
+  eval imagetype=\"\${imagetype}\"
+  eval imageblockcount=\"\${imageblockcount}\"
+  eval imagedevice=\"\${imagedevice}\"
+}
+
+
+write-definition () {
+
+# Write all the definition info to it's file.
+
+passed_deffile=$1
+
+  (
+  echo "name=\"${jailname}\""
+  echo "ip4=\"${ip4}\""
+  echo "ip6=\"${ip6}\""
+  echo "path=\"${rootdir}\""
+  echo "interface=\"${nic_devicename}\""
+  echo "fstab=\"${fstab}\""
+  echo "securelevel=\"${securelevel}\""
+  echo "cpuset=\"${cpuset_id}\""
+  echo "fib=\"${exec_fib}\""
+  echo "vnet=\"${vnet}\""
+  echo "vinterface=\"${vnet_interface}\""
+  echo "rsockets=\"${allow_raw_sockets}\""
+  echo "ruleset=\"${devfs_ruleset_number}\""
+  echo "sysvipc=\"${allow_sysvipc}\""
+  echo "quotas=\"${allow_quotas}\""
+  echo "nullfs=\"${allow_mount_nullfs}\""
+  echo "zfs=\"${allow_mount_zfs}\""
+  echo "poststartssh=\"${poststart_ssh}\""
+  echo "deffile=\"${deffile}\""
+  echo "image=\"${image}\""
+  echo "imagetype=\"${imagetype}\""
+  echo "imageblockcount=\"${imageblockcount}\""
+  echo "imagedevice=\"${imagedevice}\""
+   ) > "${passed_deffile}"
+}
+
+
+build_config_def () {
+# This builds the jail definition used in /etc/jail.conf.
+  ( echo "${jailname} { "
+    echo "host.hostname       =  \"${jailname}\";"
+    echo "path                =  \"${rootdir}\";"
+    echo "mount.fstab         =  \"${fstab}\";"
+    echo "exec.start          =  \"/bin/sh /etc/rc\";"
+    echo "exec.stop           =  \"/bin/sh /etc/rc.shutdown\";"
+    echo "exec.consolelog     =  \"/var/log/qjail.${jailname}.console.log\";"
+    echo "mount.devfs;"
+
+    [ ${ip4} ]                && \
+    echo "ip4.addr            =  ${ip4};"
+
+    [ ${ip6} ]                && \
+    echo "ip6.addr            =  ${ip6};"
+
+    [ ${nic_devicename} ]     && \
+    echo "interface           =  \"${nic_devicename}\";"
+
+    [ ${poststart_ssh} ]     && \
+    echo "exec.poststart      =  \"jexec ${jailname} \
+      pw adduser ${jailname} -p 12-12-12 -c Jail -m -g wheel -s csh -w yes\";"
+
+    [ ${securelevel} ]        && \
+    echo "securelevel         =  \"${securelevel}\";"
+
+    [ ${cpuset_id} ]          && \
+    echo "cpuset.id           =  \"${cpuset_id}\";"
+
+    [ ${exec_fib} ]           && \
+    echo "exec.fib            =  \"${exec_fib}\";"
+
+    [ ${allow_raw_sockets} ]  && \
+    echo "allow.raw_sockets;"
+
+    [ ${devfs_ruleset_number} ] && \
+    echo "devfs_ruleset       =  \"${devfs_ruleset_number}\";"
+
+    [ ${devfs_ruleset_number} ] || \
+    echo "devfs_ruleset       =  \"4\";"
+
+    [ ${allow_sysvipc} ]      && \
+    echo "allow.sysvipc;"
+
+    [ ${allow_quotas} ]       && \
+    echo "allow.quotas;"
+
+    if [ ${allow_mount_nullfs} ]; then
+      echo "enforce_statfs      =  \"1\";"
+      echo "allow.mount;"
+      echo "allow.mount.nullfs;"
+    fi
+
+    if [ ${allow_mount_zfs} ]; then
+      echo "enforce_statfs      =  \"1\";"
+      echo "allow.mount;"
+      echo "allow.mount.zfs;"
+    fi
+
+    if [ ${vnet} ]; then
+      # ${vnet} is loaded with ipfw, ipfilter, pf, or none for firewall
+      # selection, which is followed by [ng] or [be] for network configuration
+      # selection. This is inserted by the qjail config -v logic.
+
+      echo "vnet;"
+      network=`echo ${vnet}  | awk -F "|" '{print $1}'`
+      firewall=`echo ${vnet} | awk -F "|" '{print $2}'`
+      passed_parms="${jailname} ${vnet_interface} ${firewall}"
+
+      if [ "${network}" = "be" ]; then
+        echo "exec.poststart=\"qjail.vnet.be start ${passed_parms}\";"
+        echo "exec.prestop=\"qjail.vnet.be stop ${passed_parms}\";"
+      fi
+
+      if [ "${network}" = "ng" ]; then
+        echo "exec.poststart=\"qjail.vnet.ng start ${passed_parms}\";"
+        echo "exec.prestop=\"qjail.vnet.ng stop ${passed_parms}\";"
+      fi
+
+    fi
+
+    echo "}"
+  )
+}
+
+jail_start()
+{       
+  # Start all jails that are not flaged as norun by qjail.
+  # directory qjail.global holds the definition records for all jails
+  # from across all zones. 
+           
+  jaildefs="/usr/local/etc/qjail.global"
+  jaildefs_vnet="/usr/local/etc/qjail.vnet"        
+            
+  qjail_list=`ls ${jaildefs}`
+     
+  for qjail in ${qjail_list}; do
+            
+      # Drop all "norun" jails in list.
+      # Check to see if jailname has .norun suffix.
+      # Remove jailname. leaving norun or man suffix if present.
+      tjailname="${qjail##*.}"
+      if [ "${tjailname}" = "norun" ]; then
+        echo "Bypassed norun status ${qjail}"
+        continue       
+      fi            
+                      
+      read-definition ${qjail}
+                
+      if [ "${tjailname}" = "man" ]; then
+        # This is a manual start type of jail, 
+        # not to be started at boot time.
+        # Clear the jid for lost power condition 
+        # or the halt or restart commands was used.
+        #
+        write-definition "${jaildefs}/${qjail}"
+                
+        # Search all the local zome directories for the jailname
+        # and populate it with the updated global definition file.
+        #         
+        local_jaildefs="/usr/local/etc/qjail.local"
+        for local_dir in "${local_jaildefs}"*; do
+          [ -e "${local_dir}/${qjail}" ] && \
+            cp "${jaildefs}/${qjail}" "${local_dir}"
+        done 
+        echo "Bypassed manual status ${qjail}"
+        continue
+      fi       
+               
+      # If the jail to be started is a image jail, then it has to be mdconfig
+      # and it's directory tree made available for starting by the logic below.
+      #         
+      if [ -n "${imagetype}" ]; then
+             
+        # Open the image jail as directory tree.
+        # Attach the .img file as a memory disk.
+             
+        imagedevice=`mdconfig -a -t vnode -f "${image}"`
+        [ $? -eq 0 ] ||  kill \
+        "Error: Failed to 'mdconfig' the image file. ${image}"
+                           
+        # Mount the memory disk image.
+        mount "/dev/${imagedevice}" "${rootdir}" || \
+        kill "Error: Couldn't mount memory disk  ${imagedevice}"
+                    
+        # link image device
+        ln -s "/dev/${imagedevice}" "${rootdir}.device"
+      fi            
+                     
+      # If this is a vnet jail then use real definition file
+      # else use internal definition to build real definition
+      #
+      [ "${vnet}" ] && cat "${jaildefs_vnet}/${jailname}" > "/etc/jail.conf"
+      [ "${vnet}" ] || build_config_def > "/etc/jail.conf"
+                    
+      # Start the jail now.
+      #
+      /usr/sbin/jail -q -f "/etc/jail.conf" -c
+      if [ $? -ne 0 ]; then
+        post_msg "Error: /usr/sbin/jail failed to start jail ${jailname}."
+        kill "because of errors in jail.conf file."
+      fi
+
+      # Populate the pid with correct value format
+      pid="/var/run/qjail.${jailname}.pid"
+      jid=`jls -j ${jailname} jid`
+      echo ${jid} > "${pid}"
+      chmod 555 "${pid}"
+              
+      # The one time command to create the ssh jailname user account
+      # gets turned off here so it is only done one time.
+      [ ${poststart_ssh} ] && unset poststart_ssh
+            
+      write-definition "${jaildefs}/${qjail}"
+              
+      echo "Jail successfully started  ${qjail}"
+             
+  done
+}                     
+            
+                   
+jail_stop()         
+{              
+           
+  # Only stop jails that are currently running.
+  # Using the "jls" command to build list of jail names that are running.
+               
+  list=`jls name`
+             
+  for qjail in ${list}; do
+               
+    jaildefs="/usr/local/etc/qjail.global"
+    jaildefs_vnet="/usr/local/etc/qjail.vnet"
+                 
+    # Bypass jail if it don't belong to qjail.
+    [ -e "${jaildefs}/${qjail}" -o  -e "${jaildefs}/${qjail}.man" ] || continue
+            
+    [ -e "${jaildefs}/${qjail}.man" ] && qjail="${qjail}.man"
+                 
+    read-definition "${qjail}"
+            
+    # If this is a vnet jail then use real definition file
+    # else use internal definition to build real definition
+    #
+    [ "${vnet}" ] && cat "${jaildefs_vnet}/${qjail}" > "/etc/jail.conf"
+    [ "${vnet}" ] || build_config_def > "/etc/jail.conf"
+
+    /usr/sbin/jail -q -f "/etc/jail.conf" -r "${jailname}"
+
+    if [ $? -ne 0 ]; then
+      post_msg "Error: /usr/sbin/jail failed to stop jail ${jailname}."
+      kill "because of errors in jail.conf file."
+    fi
+            
+    pid="/var/run/qjail.${jailname}.pid"
+    rm  ${pid}
+            
+    # If this is image type of jail. close it.
+    if [ -n "${imagetype}" ]; then
+               
+       # unmount and detach memory disc.
+       cd /
+       umount "${rootdir}" > /dev/null 2> /dev/null
+       mdconfig -d -u "${imagedevice}" > /dev/null
+       unset imagedevice
+               
+       # Remove device link (which acts as a lock).
+       devicelink="${rootdir}.device"
+
+       rm -f "${devicelink}"
+    fi         
+               
+    echo "Jail successfully stopped  ${jailname}"
+    write-definition "${jaildefs}/${qjail}"
+  done         
+  }          
+       
+run_rc_command $*

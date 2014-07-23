@@ -1,0 +1,230 @@
+#!/bin/sh
+
+# Use these commands to list netgraph config after network is started.
+# ngctl ls -l  or  ngctl l rl0:   or  ngctl ls bridge0:
+  
+function=$1
+jailname=$2
+nicname=$3
+firewall=$4
+
+jid=`jls -j ${jailname} jid`
+
+# Load netgraph kernel modules if not done already.
+for module in ng_socket netgraph ng_bridge ng_eiface ng_ether; do
+  if ! kldstat -v | grep -qw ${module}; then
+#        echo "Loading ${module}.ko"
+        kldload ${module} || exit 1
+  fi
+done
+
+# mac manufacturer prefix. Modify if need be.
+#mac_prefix="00:1d:92"
+mac_prefix="07:22:49"
+
+start() {
+
+sysctl net.inet.ip.forwarding=1 > /dev/null 2> /dev/null
+#sysctl net.inet.ip.forwarding=1 
+
+jid=`jls -j ${jailname} jid`
+
+if [ "${jid}" -gt "100" ]; then
+  echo " "
+  echo "WARNING: The JID value is greater then 100."
+  echo "This may indicate many cycles of starting/stopping vnet jails"
+  echo "which results in lost memory pages. To recover the lost memory,"
+  echo "shutdown the host and reboot. This will zero out the JID counter"
+  echo "and make all the memory available again."
+  echo " "
+fi
+
+# The jid is used in the jails ip address which has max value of 255,
+# so draw the line at 250 running vnet jails and then force reboot. 
+#
+if [ "${jid}" -gt "250" ]; then
+  echo " "
+  echo "ERROR: No more vnet jail ip addresses can be created."
+  echo "You MUST shutdown the host and reboot before vnet jails are"
+  echo "startable again."
+  echo " "
+  exit 2
+fi
+
+# Check real ethernet interface exists.
+#
+#echo "Check real ethernet interface exists."
+if ! ngctl info ${nicname}: >/dev/null 2>&1; then
+  echo "Error: interface ${nicname} does not exist."
+  exit 1
+fi
+ifconfig ${nicname} up || exit 1
+
+
+# Check if this ethernet interface has a bridge already created on it.
+# If not then create bridge to the ethernet interface.
+#
+bridge_name=`ngctl show ${nicname}: | grep -m 1 ${nicname}bridge | awk '{print $2}'`
+
+if [ -z "${bridge_name}" ]; then
+  # This means no bridge created yet on this ethernet interface.
+
+  # Set NIC interfaces to promiscuous mode and don't overwrite src addr.
+  ngctl msg ${nicname}: setpromisc 1 || exit 1
+  ngctl msg ${nicname}: setautosrc 0 || exit 1
+
+  bridge_name="${nicname}bridge"
+#  echo "bridge_name = ${bridge_name}"
+      
+  # Create new ng_bridge node and attach it to the ethernet interface,
+  # connecting ng_ether:lower hook to bridge:link0 
+  # Connect ng_ether:upper hook to bridge:link1 after bridge name is set.
+  #           
+#  echo "Creating bridge interface ${bridge_name}."
+  ngctl mkpeer ${nicname}: bridge lower link0 || exit 1
+        
+#  echo "Assigning ${bridge_name} as bridge name."
+  ngctl name ${nicname}:lower ${bridge_name} || exit 1
+         
+  # Connect ng_ether:upper hook to bridge:link1 after bridge name is set.
+  #
+#  echo "Connect ${nicname}:  to ${bridge_name}"
+  ngctl connect ${nicname}: ${bridge_name}: upper link1 || exit 1
+         
+#  echo "Bridge ${bridge_name} is created and ${nicname} is connected."
+fi          
+
+# Create and link vnet jail to bridge. 
+#         
+#echo "Creating node interface for vnet jail ${jailname}."
+ngctl mkpeer eiface ether ether || exit 1
+org_eiface=`ngctl l | grep ngeth | tail -n 1 | awk '{print $2}'`
+#echo "eiface name=${org_eiface}"
+
+#echo "Renaming vnet jail ng node interface name to jailname."
+ngctl name ${org_eiface}: ${nicname}${jailname} || exit 1
+eiface="${nicname}${jailname}"
+
+#echo "Renaming ifconfig vnet jail interface name to ${eiface}."
+ifconfig ${org_eiface} name ${eiface} 
+
+#echo "Finding next link number for this bridge."
+used_linknum=`ngctl show ${bridge_name}: | grep link | cut -c 7-7`
+highest_linknum=0
+for used_num in ${used_linknum}; do
+   if [ "${used_num}" -gt "${highest_linknum}" ]; then
+     highest_linknum="${used_num}"
+   fi           
+done         
+#echo "highest_linknum=${highest_linknum}"   
+linknum=`expr ${highest_linknum} + 1`
+ 
+             
+# Connect vnet jail virtual interface to bridge interface. 
+#
+#echo "Connecting ${eiface} to ${bridge_name}:link${linknum}."
+ngctl connect ${eiface}: ${bridge_name}: ether link${linknum} || exit 1
+
+# Move host virtual interface to vnet virtual node. 
+# Moved interface can be seen in the output of ifconfig command issued
+# from within the started vnet jail or by issuing 
+# 'jexec jailname ifconfig' from the host system.
+#
+#echo "Moving ${eiface} to ${jailname}."
+ifconfig ${eiface} vnet ${jailname} || exit 1
+
+# Make lo0 interface localhost.
+jexec ${jailname} ifconfig lo0 localhost || exit 1
+
+
+# Set the MAC address of the new interface using a sensible 
+# algorithm to prevent conflicts on the network. First three 
+# octets can be changed by user. Last three octets are
+# generated randomly.
+#
+M4=`od -An -N2 -i /dev/random | sed -e 's/ //g' | \
+     awk '{ print $1 % 256 }'`
+M5=`od -An -N2 -i /dev/random | sed -e 's/ //g' | \
+     awk '{ print $1 % 256 }'`
+M6=`od -An -N2 -i /dev/random | sed -e 's/ //g' | \
+     awk '{ print $1 % 256 }'`
+
+mac=`printf ${mac_prefix}:%02x:%02x:%02x ${M4} ${M5} ${M6}`
+
+
+#echo "Setting mac address of ${eiface} to '${mac}'"
+jexec ${jailname} ifconfig ${eiface} link $mac || exit 1
+
+# Set IP address inside of vnet jail ng virtual interface.
+#echo "Setting IP address of ${eiface} to 10.${jid}.0.2"
+jexec ${jailname} ifconfig ${eiface} inet 10.${jid}.0.2 || exit 1
+
+# Assign default route ip address to ng virtual interface
+# inside of the vnet jail. 
+#
+#jexec ${jailname} route add default 10.${jid}.0.1 || exit 1
+jexec ${jailname} route add default 10.${jid}.0.1 > /dev/null 2> /dev/null
+
+
+if [ ${firewall} = "none" ]; then
+  # If no firewall was selected in config -v
+  # Start services inside of jail needed for network.
+  # Note: using service command because it's not nojail keyword aware.
+  #
+  jexec ${jailname} service netif start > /dev/null 2> /dev/null
+  jexec ${jailname} service routing start > /dev/null 2> /dev/null
+  exit 0
+fi
+
+if [ ${firewall} = "ipfw" ]; then
+
+  # Chech to see if selected firewall kernel modules have been loaded.
+  if ! kldstat -v | grep -qw ${firewall}; then
+    echo "Error: ${firewall} was not compiled into the kernel."
+    exit 2
+  fi
+
+  # If ipfw firewall was selected in config -v
+  # Using the ${eiface} interface name of the vnet jail
+  # write the value to a file so the ${eiface} interface name can be
+  # passed to the ipfw.rules file, then start ipfw.
+  # Start services inside of jail needed by ipfw firewall.
+  # Note: using service command because it's not nojail keyword aware.
+  #
+  ipfw_epair="/usr/jails/${jailname}/etc/epair"
+  echo "${eiface}" > ${ipfw_epair}
+  jexec ${jailname} service netif start > /dev/null 2> /dev/null
+  jexec ${jailname} service routing start > /dev/null 2> /dev/null
+  jexec ${jailname} service ipfw start > /dev/null 2> /dev/null
+  exit 0
+fi
+
+#echo "Netgraph vnet jail network established successfully!"
+
+}
+
+stop() {
+
+ngctl shutdown ${nicname}${jailname}: >/dev/null 2>&1
+
+# Get the bridge name for this NIC.
+#
+bridge_name=`ngctl show ${nicname}: | grep -m 1 ${nicname}bridge | awk '{print $2}'`
+
+
+# If there are only 2 links (link0 & link1) on the bridge name,
+# this means all the vnet jails have been shutdown so shutdown the bridge.
+#
+#echo "Finding next link number for this bridge."
+linknum=`ngctl show ${bridge_name}: | grep link | wc -l | sed -e "s/ //g"`
+[ ${linknum} -eq 2 ] && ngctl shutdown ${bridge_name}: >/dev/null 2>&1
+
+#echo "Netgraph vnet jail network shutdown successfully!"
+sleep 2
+}
+
+# Main entry point.
+#
+[ "${function}" = "start" ] && start  && exit 0
+[ "${function}" = "stop" ]  && stop   && exit 0
+

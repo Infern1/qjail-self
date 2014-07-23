@@ -1,0 +1,19 @@
+
+# /etc/epair is populated by the "qjail.vnet" script with the
+# epairXb value which becomes the interface device name used by
+# this ipfw rules file.
+#
+if [ -e /etc/epair ]; then
+ oif=`cat "/etc/epair"`
+  rm /etc/epair
+else
+  oif="lo0"
+fi
+
+#oif = "xxx"               # oif is the macro name for the
+                           # NIC facing the public internet
+
+set skip on lo0           # No restrictions on Loopback Interface
+
+pass log (all) quick on $oif all
+

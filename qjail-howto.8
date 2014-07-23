@@ -1,0 +1,423 @@
+.Dd July 22, 2013
+.Dt quail-howto 8 USD
+.Os
+.Sh NAME
+.Nm qjail-howto
+.Nd Details explaining how to use qjail to quickly build a jail system using static IP address and LAN IP addresses.
+.Sh DESCRIPTION
+.hy 0
+This howto will strive to explain how the qjail utility is used in a real
+world application using jails that utilize both static public routable IP
+addresses assigned by the ISP and private LAN jails that have access to
+both the public internet and a internal private LAN. Utilizing a approach
+that fills in the blanks of how all the network separate functions fit
+together.
+.Pp
+.Sh SCENARIO DESCRIPTION
+.hy 0
+Please keep in mind that all this is fictitious, complete fake. For the
+purpose of this discussion, we are an County Jobs Service Center. People
+are referred to us from Social Services for computer training as csh
+script, html and php programmers. In addition Job seekers can search the
+jobs offered by employers through the County Unemployment Department web
+site. We host the County and City email systems, as well as information
+only websites describing the departments in the City and the County.
+.Pp 
+In the County Jobs Service Center building we have a room with 20 desktop
+computers running MS/Windows7 for use by job applicants who are taught
+interview skills by taking Computer assisted learning videos and another
+room with 20 desktop computers running MS/Windows7 for computer 
+education. There is another 45 PC's spread across the 3 floors of the 
+building located at County employee desks. All 85 PC's are cabled through
+switches and WiFi routers to the FreeBSD host. There are WiFi routers on 
+each floor for people who have County issued laptops used for field work.
+A description of the hardware is not important here.
+.Pp
+The qjail utility is the only vehicle used for administration of our jail
+environment. The port version of qjail is always the current version and
+most times is newer than what the package system offers.
+.Pp
+.Sh STATIC VERSUS DYNAMIC IP ADDRESS 
+.hy 0
+There is a big difference between the two in how they get configured on
+the host system.
+.Pp
+Static IP address are only assigned by the ISP for Business Class 
+Internet service. The IP addresses assigned are public routable and
+permanent. The ISP does not provide any auto configuration services. The
+host configuration files have to be manually configured. The ISP will
+convey the following information;
+.Pp
+List of the assigned static IP addresses that will need /etc/rc.conf
+ifconfig statements written to enable their usage. The fully qualified 
+domain name of their DNS server plus the 2 IP addresses of their DNS 
+servers. This info is used to populate /etc/resolv.conf.
+.Pp
+Dynamic IP addresses are assigned as a single IP address by the ISP for
+Home Class Internet service. The IP address assigned is public routable.
+Home Class Internet service is much cheaper than Business Class. Don't be
+fooled by who uses Home Class internet service. Many small to medium       
+sized businesses have this type of service. Dynamic means the ISP 
+provides auto configuration through DHCP and that the assigned IP address
+can change on you while in use. The ISP can reconfigure their network on
+the fly to use a different block of network IP address or change the DSN
+IP addresses. The /etc/rc.conf ifconfig_rl0="DHCP" statement will 
+automatically handle this change on the fly transparently.
+.Pp
+While were talking about IP addresses, per RFC 1918, there are groups of
+IP address ranges reserved for private networks that will never be
+connected to the public internet. These are intended for Local Area
+Networks. They are not routable on the public Internet without first being
+NATed.
+                 10.0.0.0      -     10.255.255.255
+                 172.16.0.0      -   172.31.255.255
+                 192.168.0.0     -   192.168.255.255
+.Sh DOMAIN NAMES
+.hy 0
+Domain names have to be registered in the country where they are located
+and a yearly fee is charged. The domain name is linked to your static IP
+address and this information is distributed to public Internet DNS
+servers so users on the internet can put your fully qualified domain name
+in the URL field of their web browser and find it's way to the Business's
+website.
+.Pp
+If you used a dynamic IP address to link to your domain name then when
+the dynamic IP address changes the linked domain name no longer points to
+your host and all Internet traffic stops. Now there are solutions to
+address this problem. Some domain name registers, and companies that host
+domain names, offer services where a program is run on the host that
+watches for dynamic IP changes and then updates the linked IP address of
+the domain name with the new dynamic IP address when a change occurs.
+Using this technique will keep your domain name pointing at your host.
+.Sh TECHNICAL OVERVIEW
+.hy 0
+Our domain name register hosts our domain names. The ISP assigned us 10
+static IP addresses. We are only going to talk about six of them to
+demonstrate how they are used with jails.
+.Pp
+The host only has 3 services running on it, SSH, DHCP and IPFILTER
+firewall. The firewall blocks public Internet access to SSH. SSH is only
+allowed to be used over the LAN. Only Tech Support personal have user
+accounts on the host and can only SSH into the host from a LAN PC. DHCP
+is what issues private LAN IP address to LAN PC's as they power up. All
+the WiFi routers have their internal NAT function disabled so as not to
+interfere with the host DHCP IP address assignments and the IPFILTER
+firewall NAT function.
+.Pp
+   Name of NIC facing the public internet   xl0
+   Public routable static IP address  73.x.97.50
+                                      73.x.97.51
+                                      73.x.97.52
+                                      73.x.97.53
+                                      73.x.97.54
+                                      73.x.97.55
+.Pp
+   ISP's DNS search name                      dns.master.com
+   ISP's 2 IP addresses of there DNS servers  73.x.95.1
+                                              73.x.95.2
+.Pp
+   Domain names and their linked IP addresses
+                   www.city.cjsc.gov    -> 73.x.97.51
+                   www.county.cjsc.gov  -> 73.x.97.52
+                   smtp.city.cjsc.gov   -> 73.x.97.53
+                   smtp.county.cjsc.gov -> 73.x.97.54
+.Pp
+   Name of NIC facing the private LAN    rl0
+   LAN IP address 10.0.10.0/24 means      10.0.10.0 through 10.0.10.255
+   LAN IP address assigned to host's DHCP 10.0.10.0 through 10.0.10.125
+   LAN IP address reserved for jails    10.0.10.126 through 10.0.10.255
+.Sh BASIC HOST LAN CONFIG SETUP
+.hy 0
+It's assumed that the DHCP port was previous installed on the host.
+.Pp
+Place these in the hosts /etc/rc.conf
+   hostname="host.cjsc.gov"
+   ifconfig_xl0="inet 73.x.97.50 255.255.255.128 broadcast 73.x.97.59"
+   ifconfig_rl0="inet 10.0.10.2 netmask 0xffffff00"
+   gateway_enable="YES"
+   qjail_enable="YES"
+.Pp
+   dhcpd_enable="YES"
+   dhcpd_conf="/usr/local/etc/dhcpd.conf"
+   dhcpd_ifaces="rl0"
+   dhcpd_flags="-q"
+   dhcpd_withumask="022"
+.Pp
+   ipfilter_enable="YES"
+   ipfilter_rules="/etc/ipf.rules"
+   ipmon_enable="YES"
+   ipmon_flags="-Ds"
+   ipnat_enable="YES"
+   ipnat_rules="/etc/ipnat.rules"
+.Pp
+Place these in the hosts /etc/resolv.conf
+   search dns.master.com
+   nameserver  173.xx.195.1
+   nameserver  173.xx.195.2
+.Pp
+Add these to /usr/local/etc/dhcpd.conf
+   option domain-name "host.clev-cjsc.gov";
+   option domain-name-servers 73.x.95.1 73.x.95.2;
+   subnet 10.0.10.0 netmask 255.255.255.0 {
+   range 10.0.10.1 10.0.10.125;
+   option routers 10.0.10.2;}
+.Pp
+Add these to /etc/ipnat.rules
+   # NOTE: xl0 is the interface facing the public internet
+   # Provide special NAT services for FTP from LAN users.
+   map xl0 10.0.10.0/24 -> 0/32 proxy port 21 ftp/tcp
+   # Provide special NAT services for FTP from gateway system.
+   map xl0 0.0.0.0/0 -> 0/32 proxy port 21 ftp/tcp
+   # Provide Normal NAT services for LAN users.
+   map xl0 10.0.10.0/24 -> 0/32
+.Pp
+Put these in /etc/ipf.rules.script
+   # No restrictions on Inside Lan Interface for private network
+   pass in  quick on rl0 all
+   pass out quick on rl0 all
+   # No restrictions on Loopback Interface
+   pass in  quick on lo0 all
+   pass out quick on lo0 all
+   # No restrictions on external Interface facing public Internet
+   pass in  quick on xl0 all
+   pass out quick on xl0 all
+   # Create your own rules per handbook IPFILTER firewall section
+.Pp
+Now if you have your network cabled correctly, the host DHCP server will
+assign a 10.0.10.??? IP address to each PC when they are powered on.
+Each PC will have Internet access if your firewall NAT rules are correct.
+This is a normal LAN configuration.
+.Sh JAIL CONFIG SETUP USING QJAIL
+.hy 0
+.Pp
+Step 1. Install the qjail environment
+ \fBqjail install\fR
+ \fBqjail update -p\fR  will perform a portsnap which downloads the complete
+                  port tree which is shared between all jails. This is
+                  an optional step and not necessary if only using the
+                  port packages to install software in all the jails.
+.Pp
+Step 2.  Create 2 directory tree type jails accessible from the public
+Internet, one for the City info website and one for the County info web
+site. These jails will have SSH enabled so Tech Support personal can
+install the package version of apache and the html application on the 2
+web server jails.
+.Pp
+\fBqjail create -n xl0 -f ssh-default -4 73.x.97.51,10.0.10.126 www-city\fR
+.Pp
+This will create a directory tree type jail and bind the 2 IP address
+to the NIC facing the public internet. When the jail is started, aliases
+will automatically be created on the NIC name contained in the -n option
+and automatically removed when the jail is stopped. The jails name will
+be www-city. The -f option uses the ssh-default flavor that creates a
+user account in the jail with a login ID/PW of qjail. From any LAN
+MS/Windows PC can use putty to target 10.0.10.126 IP address and login to
+that jail.
+.Pp
+ \fBqjail list\fR                  Lists status of all jails
+ \fBqjail list www-city\fR         Only list status of this jail
+ \fBqjail start www-city\fR        Start just this jail
+.Pp
+ \fBqjail console www-city\fR      Will open a root console in that jail.
+                             Then execute pkg_add -r apache22 to
+                             install the web server software.
+                             Enter "exit" to close console.
+.Pp
+An alternate method would be to use "putty" and login to the jail and
+once logged in issue "su" then pkg_add -r apache22 to install the web
+server software.
+.Pp
+ \fBqjail create -n xl0 -c -4 73.x.97.52,10.0.10.127 www-county\fR
+.Pp
+This is the same as the www-city jail, except this time the -c option
+stages a pw adduser command using the jail name as the ID/PW that will
+get executed the first time the jail is started.
+.Pp
+ \fBqjail start www-county\fR       This executes the staged adduser command
+                              and enables SSH in the jail.
+.Pp
+ \fBqjail restart www-county\fR     Will stop and start the jail activating
+                              SSH from this point on.
+.Pp
+This jail can be customized using either of the 2 methods shown above.
+.Pp
+Step 3.  Create 2 directory tree type jails accessible from the public
+Internet, one for the City email server, and one for the County email
+server. These jails will have SSH enabled so Tech Support personal can
+install the package version of postfix on the 2 email jails.
+.Pp
+ \fBqjail create -n xl0 -c -4 73.x.97.53,10.0.10.128 smtp-city\fR
+.Pp
+ \fBqjail start smtp-city\fR       This executes the staged adduser command
+                             and enables SSH in the jail.
+.Pp
+ \fBqjail restart smtp-city\fR     Will stop and start the jail activating
+                             SSH from this point on.
+.Pp
+This jail can be customized using either of the 2 methods shown above.
+But this time doing pkg_add -r postfix.
+.Pp
+ \fBqjail stop smtp-city\fR        Only stopped jails can be archived.
+ \fBqjail archive smtp-city\fR     This creates an archive of this jail. Do 
+                             this after postfix is installed but 
+                             before it's configured or user accounts
+                             added.
+.Pp
+\fBqjail create -n xl0 -c -a smtp-city -4 73.x.97.54,10.0.10.129 smtp-county\fR
+.Pp
+This will create the new jail using the smtp-city archive as a template
+resulting in the new jail already having postfix installed.
+.Pp
+ \fBqjail start smtp-county\fR     This executes the staged adduser command
+                             and enables SSH in the jail.
+.Pp
+ \fBqjail restart smtp-county\fR   Will stop and start the jail activating
+                             SSH from this point on.
+.Pp
+This jail can be customized using either of the 2 methods shown above.
+.Pp
+Step 4.  Create 2 additional jails, one for the County Unemployment
+Department website, and one for the Computer assisted learning web site.
+Both of these jail run apache/php/mysql and are loaded with an
+proprietary application that uses mysql for storing entered application
+data. To put a upper limit on the disk space consumed by these
+applications an sparse file image type jail will be used. For proprietary
+reasons these jails can only be accessible from the LAN and no ssh access
+is allowed to these jails. Tech Support personal can ssh from the LAN
+into the host and use "qjail console" command to gain access to these
+jails to install the package version of apache and mysql and the ports
+version of php because php needs the "apache module" compiled into it.
+.Pp
+ \fBqjail create -n rl0 -i -s 5g -4 10.0.10.130 www-jobsdb\fR
+.Pp
+This will create an image jail 5 gig in size with no SSH support.
+.Pp
+ \fBqjail start www-jobsdb\fR
+ \fBqjail console www-jobsdb\fR  Only the host console can gain access to
+                           the jail as root. From here the apache, 
+                           php and mysql ports get installed.
+ \fBqjail stop www-jobsdb\fR      Only stopped jails can be archived.
+ \fBqjail archive www-jobsdb\fR   After installing the software and before
+                            installing the proprietary html 
+                            application do a archive because the 
+                            Computer assisted learning jail and the 
+                            computer training class jails need this 
+                            same group of software.
+.Pp
+ \fBqjail create -n rl0 -a www-jobsdb -i -s 5g -4 10.0.10.131 www-cal\fR
+.Pp
+This just created the Computer assisted learning jail.
+.Pp
+ \fBqjail start www-cal\fR
+ \fBqjail console www-cal\fR  Only the host console can gain access to the
+                        jail as root. From here the proprietary html
+                        application and mysql db are loaded.
+.Pp
+So the jail's IP address don't have to be used to access the website we 
+make a entry in the /etc/hosts file relating the jails IP address to it's
+LAN domain name www.jobsdb.gov.
+.Pp
+     10.0.10.130  lanjobsdb www.jobsdb.gov
+     10.0.10.131  lan-cal   www.cal.gov
+.Pp
+Step 5.  We also need to create jails for the computer training class.
+The maximum number of students per session is 60. Each student gets there
+own jail to work in. These students use "putty" a free SSH MS/Windows
+application to login over SSH to their jail. The jails IP address is the
+only info "putty" needs to get a login prompt. Students learn to write
+csh scripts, html web sites and html/php/mysql web sites. These jails are
+only accessible through the LAN using SSH. Because the computer training
+class cycle through 4 session per year, at the end of each session all 
+the computer training class jails are deleted and recreated from a 
+standard class-template each session. To further protect the host from 
+student abuse image jails will be created putting a maximum on the amount
+of disk space the class jails can grow to consume.
+.Pp
+ \fBqjail create -n rl0 -a www-jobsdb -4 10.0.10.139 class-template\fR
+ \fBqjail start   class-template\fR
+ \fBqjail console class-template\fR  Install additional software used 
+                               by students phpmyadmin unix2dos ytree.
+ \fBqjail stop    class-template\fR
+ \fBqjail archive class-template\fR
+ \fBqjail delete  class-template\fR
+.Pp
+Note: Because of wrap around the following is shown on 2 lines but
+      would be issued on the hosts command line as a single command.
+.Pp
+ \fBqjail create -n rl0 -a class-template -i -s 50m -D 60 -I -C 
+                                  -4 10.0.10.139 class101\fR
+.Pp
+This creates 60 image type jails appending a -00 counter suffix on 
+the jail name while at the same time bumping the last octal of the IP 
+address by one. At the same time SSH is enabled in the jail and a user 
+account using the jailname as ID/PW is created.
+.Pp
+Note:  The wildcard symbol "=" will consider text to it's left as a  
+prefix, all qjail commands can use the prefix wildcard symbol "=" to 
+cause the command to match on all jailnames having that prefix.
+.Pp
+ \fBqjail start course101=\fR   Will start all the just created jails.
+                          This first start of the new jails enables 
+                          SSH in the jail.
+.Pp
+ \fBqjail restart course101=\fR   Will stop the jails and then start all
+                            the jails. This has to be done to activate 
+                            SSH in the jails from this point on.
+.Pp
+ \fBqjail config -r course101=\fR  Will enable norun status.
+.Pp
+When students register for the class they are given the login ID/PW of 
+the jail being assigned to them. Then the teacher changes the status to 
+run. First thing student does is change the password of his jail account.
+.Pp
+ \fBqjail config -R course101-15\fR   Or whatever the next free jail is.
+ \fBqjail start course101-15\fR           The jail runs 24/7.
+ \fBqjail list\fR                Will show you the status of all the jails.
+.Pp
+ \fBqjail delete course101=\fR   Will delete all the jail at end of course.
+.Pp
+Every week day at midnight a cron script is run to archive all the class
+jails. This way a jail can be restored to last night's status if the 
+student somehow managed to kill his jail.
+.Pp
+ \fBqjail stop course101=\fR
+ \fBqjail archive course101=\fR
+ \fBqjail start course101=\fR
+.Pp
+To restore a jail do this
+ \fBqjail stop    course101-43\fR
+ \fBqjail delete  course101-43\fR
+ \fBqjail restore course101-43\fR
+ \fBqjail start   course101-43\fR
+.Pp
+Lets say the student forgets their password. The teacher uses SSH to
+login into the host, does a qjail console command for the students
+jailname. Deletes the students account and recreates it again.
+.Pp
+Lets say the www-jobsdb jail consumes all of its allocated disk space and
+additional jail image disk space needs to be allocated.
+ \fBqjail stop    www-jobsdb\fR
+ \fBqjail archive www-jobsdb\fR
+ \fBqjail delete  www-jobsdb\fR
+ \fBqjail create -n rl0 -a www-jobsdb -i -s 15g -4 10.0.10.130 www-jobsdb\fR
+  Here we increased the size of the image file from the original 5g to 
+  15g and everything else stays the same. No content data is lost.
+.Pp
+A more conservative method could by done this way.
+ \fBqjail stop www-jobsdb\fR
+ \fBqjail archive www-jobsdb\fR
+ \fBqjail config -r www-jobsdb\fR
+ \fBqjail config -n www-jobsdb-old www-jobsdb\fR
+ \fBqjail config -4 10.0.10.250 www-jobsdb-old\fR
+ \fBqjail config -c null www-jobsdb-old\fR
+ \fBqjail create -n rl0 -a www-jobsdb -i -s 15g -4 10.0.10.130 www-jobsdb\fR
+.Pp
+The above qjail config command put the jail in norun status, gives the
+jail a new name, new IP address, unbinds the jail from the NIC. In short
+the jail is present in the jail environment but is dead. Just as easily
+as it was made dead it can also be brought back to life.
+.Sh "SEE ALSO"
+qjail(8), qjail.conf(8), qjail-intro(8) 
+.Sh AUTHOR
+.An Joe Barbish 
+.Aq qjail@a1poweruser.com

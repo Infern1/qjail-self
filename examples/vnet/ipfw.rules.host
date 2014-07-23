@@ -1,0 +1,14 @@
+# Flush out the list before we begin.
+ipfw -q -f flush
+
+cmd="ipfw -q add"
+
+# rl0 is the interface device name facing the public internet.
+# Manually edit this file and replace rl0 with your value.
+#
+pif="rl0"
+
+$cmd 010 allow all from any to any via lo0
+$cmd 011 allow log all from any to any via $pif
+
+

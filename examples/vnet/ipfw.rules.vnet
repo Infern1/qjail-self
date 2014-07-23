@@ -1,0 +1,20 @@
+# Flush out the list before we begin.
+ipfw -q -f flush
+
+cmd="ipfw -q add"
+
+# /etc/epair is populated by the "qjail.vnet" script with the
+# epairXb value which becomes the interface device name used by
+# this ipfw rules file.
+#
+if [ -e /etc/epair ]; then
+  pif=`cat "/etc/epair"`
+  rm /etc/epair
+else
+  pif="lo0"
+fi
+
+$cmd 010 allow all from any to any via lo0 
+$cmd 011 allow log all from any to any via $pif
+
+

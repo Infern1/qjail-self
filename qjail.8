@@ -1,0 +1,1379 @@
+.Dd June 22, 2014
+.Dt qjail 8
+.Os
+.Sh NAME
+.Nm qjail
+.Nd Utility for deployment of jail environments 
+.Sh SYNOPSIS
+.Nm
+install [-z zone] [-h ftp host] [-f file location] [-l] 
+.Nm
+create  [-z zone] [-n interface] [-a archive] [-f flavor]
+        [-A archive zone] [-c] [-i size] [-d duplicate#] 
+        [-4 IPv4...] [-6 IPv6...] jailname
+.Nm
+list    [-z zone] [jailname...]
+.Nm
+start   [-z zone] [jailname...]
+.Nm
+stop    [-z zone] [jailname...]
+.Nm
+restart [-z zone] [jailname...]
+.Nm
+console [-z zone] [-e]  jailname
+.Nm
+archive [-z zone] [-A] [-s] [jailname...]
+.Nm
+delete  [-z zone] [-A] [jailname...]
+.Nm
+restore [-z zone] [-s] [jailname...]
+.Nm
+config  [-z zone] [-c newnic] [-n newname] [-b rule#] [-A -d -h]
+        [-B -k -K -l -L -m -M -q -Q -r -R -v -V -x -X -y -Y] 
+        [-f value] [-p value] [-s value] [-w value] 
+        [-4 newIPv4...] [-6 newIPv6...] jailname
+.Nm
+update  [-z zone] [-b] [-p] [-P] [-S] [-l on|off]
+.Nm
+logmsg  [text....]   
+.Nm
+help    [manual]
+.Sh DESCRIPTION
+.hy 0
+\fBNOTICE   NOTICE   NOTICE   NOTICE   NOTICE   NOTICE   NOTICE   NOTICE 
+This version of qjail has been converted from using the legacy rc.d 
+rc.conf method of jail definition as used in all pervious versions of 
+qjail, to using the jail(8) jail.conf method which became available in 
+9.1-RELEASE. This upgrade provides the ability to enable the following 
+new options on a per-jail basis. allow.raw_sockets, devfs_ruleset, 
+allow.sysvipc, allow.quotas, allow.mount.nullfs, allow.mount.zfs, 
+securelevel, cpuset.id, exec.fib, vnet.interface, and vnet. The vnet 
+option gives a jail its own network stack using the experimental vimage 
+software. This qjail version is only functional for 10.0-RELEASE and 
+newer. The vnet option has only been tested on i386 and amd64 equipment.
+.Pp
+The \fBqjail\fR utility is used to manage the qjail environment and all the 
+jails inside the qjail scope. Qjail's administration ease does not 
+evaporate as jails deployed grow beyond 15 jails. For the deployment of a 
+large number of jails, qjail provides two facilities designed to make 
+their management easy. The First facility is the group prefix selection 
+ability, which is advantageous in managing both small and large jail 
+deployments. The group prefix \fBequal sign "=" wildcard\fR when used on the 
+jailname allows for management of jails based on common jailname group 
+prefixes. The second facility is qjail's ability to create multiple 
+unique jail environments, thus providing another method to group common 
+jails together for easier management. A large deployment of hundreds of 
+jails is possible if your host system resources are adequate and a jail 
+naming convention is used to segregate jails into manageable groups.   
+.Pp
+This utility deploys two different jail types. The first type is based on 
+a Directory tree. This type has unlimited disk space growth potential, it 
+shares the host's disk space. The jail will never run out of space until 
+the host does. The second type is based on a sparse image file. A sparse 
+file is one that occupies only the sum size of its contents, not its 
+allocation size. IE; a sparse file allocated size of 5M, but only having 
+7 files, each 1k in size, only occupies 7k of physical disk space. As 
+content is added, additional physical disk space is occupied up to the 5M 
+allocation ceiling. The sparse file is mounted as a memory disk using the 
+mdconfig command and populated with the directory tree content of a jail. 
+This configuration is called a sparse image jail. Its major benefits is 
+it provides a way to put a hard limit on the maximum amount of disk space 
+a jail can consume. This provides an addition level of protection to the 
+host from intentional or unintentional run-a-way processes inside of a 
+jail consuming disk space until the host system dies.
+.Pp
+Adding \fBqjail_enable="YES"\fR to the "host's" /etc/rc.conf file, will cause
+all jails to be started when the system is booted.
+.Pp
+Following the command "qjail" is the function subcommand. Each function 
+subcommand has its own list of unique options. Qjail is executed from 
+/usr/local/bin/ and is a command interpreter Bourne type (shell) script 
+that has to be run from user root.  
+.Sh qjail install
+.hy 0
+Allocates the directory structure used by qjail and must be populated 
+with the same RELEASE version as the host is running. For security 
+purposes its necessary that the qjail directory structure be populated 
+with a pristine version of the operating system. By pristine we mean 
+"clean, uncompromised, never been exposed to the public internet", as in 
+a fresh install newly compiled from the sources, or installed from an iso 
+image file, or from the original distribution files. By default, Qjail 
+downloads the original distribution files to populate its directory 
+structure with a pristine version.
+.Pp 
+This is doable only with production versions of the operating system.
+These are identified by versions labeled as "X.X-RELEASE" and have both
+iso image files and original distribution files available for download
+from the FreeBSD FTP servers. 
+.Pp
+The pre-release versions "X.X-BETAx and X.X-RCx" are only made available 
+as iso image files on the FTP servers for user testing. The last X.X-RCx 
+version becomes the next X.X-RELEASE version released to the public. You
+can install the qjail directory structure using these pre-release 
+versions by using this command, "qjail install -f path.to.file.location"
+to point to the iso file on your hard drive or to a cdrom containing the 
+burned iso file. 
+.Pp
+The "X.X-STABLE, X.X-PRERELEASE and X.X-CURRENT" versions are only
+creatable by compiling the FreeBSD sources. Qjail will not install on  
+host's running these versions. You can work around this by issuing these
+commands.
+    setenv UNAME_r "X.X-RELEASE"  Code what ever the current RELEASE is.
+    qjail install           This will load the above version into qjail.
+    qjail update -b         Copy the host's binaries into qjail system.
+.Pp
+During the "qjail install" process the following directory structure is
+allocated:                                                             
+.Pp
+\fBsharedfs\fR contains all of the operating system's executable libraries as
+read-only files and is mounted as an "nullfs" that is shared between all
+the individual jails. It's populated with a pristine version of the 
+operating systems binaries. This design effectively secures all the 
+executable files from being updated or deleted and also secures the 
+directories containing the executable files from having new files 
+inserted by any process running inside of the jail. The "usr/src" and 
+"usr/ports" directories are also included. The hosts "usr/ports" 
+filesystem can temporarily be made available to the jails by using the 
+"mv" command like this:                                                  \
+\fBmv /usr/ports /usr/jails/sharedfs/usr\fR and returned doing                 \
+\fBmv /usr/jails/sharedfs/usr/ports /usr\fR                                  
+.Pp
+\fBtemplate\fR contains the operating system configuration files. It is
+copied to form the base filesystem of each jail.                       
+.Pp
+\fBarchive\fR is where the archive files are stored that are created by 
+the "qjail archive" command.                                        
+.Pp
+\fBflavors\fR contains the "default" and "ssh-default" system flavors 
+and any user created custom flavors.                                   
+.Pp
+Four internal administration directories are created and get populated 
+with information unique to each jail.                                  \
+\fB/usr/local/etc/qjail.fstab\fR                                       \
+\fB/usr/local/etc/qjail.local\fR                                       \
+\fB/usr/local/etc/qjail.global\fR                                      \
+\fB/usr/local/etc/qjail.vnet\fR                                        
+.Pp
+This command can be run any time to rebuild the sharedfs and the template 
+from scratch while not disturbing the existing jails, or your 
+customized flavors. The "default and ssh-default" flavors are renamed 
+with "users.saved." prefix before being replaced with fresh versions.  
+.Pp
+If rebuilding using a newer major RELEASE, IE: 7.2 to 8.0, then remember, 
+all existing jails that have ports or packages in them will need them 
+updated to versions compatible with the new major RELEASE version. If 
+going from a subversion to a newer subversion within the same major 
+RELEASE, IE: 8.0 to 8.1, then there is no need to update your installed 
+ports/packages.    
+.Pp
+The options are as follows:
+.Bl -tag -width indent
+.It Fl z
+.hy 0
+Code this option to create multiple unique qjail environments.
+The coded zone value is appended to /usr/jail as /usr/jail.zone
+and to /usr/local/etc/fstab.qjail.zone and 
+/usr/local/etc/qjail.local.zone which uniquely segregates the qjail
+environments. All ". - /" in the zone name are converted to "_"
+underscores to standardize zone names. All the other qjail 
+subcommands "MUST" code the same zone value to process against 
+the zone created here. If absent /usr/jails and 
+/usr/local/etc/qjail.fstab and /usr/local/etc/qjail.local/ are used.
+.It Fl h
+.hy 0
+Code the URL of the remote host to fetch the original 
+distribution files from. If this option is absent the default 
+host ftp2.freebsd.org is used. You may change the default using
+the -h ftp7.freebsd.org option. Read this for complete list of 
+FTP servers to choose from.
+www.freebsd.org/doc/en_US.ISO8859-1/books/handbook/mirrors-ftp.html 
+.It Fl f
+.hy 0
+Code the complete path to the location where any of three RELEASE 
+sources are to target as the source to populate qjail's directory 
+structure from. That could be the mounted disc1 cdrom, or the 
+downloaded disc1.iso image file, or the downloaded original
+distribution files.
+.It Fl l
+.hy 0
+This enables logging of all qjail commands and error messages to 
+/var/log/qjail.log file. Each log entry is prefixed with a 
+date/time stamp and the user account name of the user entering 
+the commands. An entry is also made in /etc/newsyslog.conf to 
+auto rotate the qjail.log file.
+.El
+.Sh qjail install examples
+.hy 0
+1.  qjail install (without any options)
+          The RELEASE distribution files used to populate the qjail 
+          directory structure will be fetched from an FreeBSD FTP 
+          server and be the same RELEASE version as the host. Some 
+          times at the publication of a new RELEASE version, the FTP 
+          server may become so busy that the download gets timed out
+          or connection is refused because of too many current users. 
+          RE-issuing the command will start the FTP download from 
+          the beginning again.
+.Pp     
+2.  qjail install -h ftp6.freebsd.org -l
+          Same behavior as above, except the FreeBSD ftp server specified
+          in the -h option is used, and the qjail system wide logging 
+          is enabled. 
+.Pp    
+3.  mount_cd9660 /dev/cd0 /mnt
+    qjail install -z env1 -f /mnt/usr/freebsd-dist
+          Use this option to target a mounted disc1 RELEASE cdrom 
+          as the source of the original distribution files used to 
+          populate the qjail directory structure. Plus a uniquely named 
+          qjail zone is created named "env1". 
+.Pp
+          After the install completes, execute the following commands
+          to release the disc1 RELEASE cdrom.
+               cd /usr
+               umount  /mnt
+.Sh qjail create
+.hy 0
+Creates a new jail inside qjail's scope. It has great flexibility in
+creating Directory Tree type jails and sparse file image type jails from
+the template or from a previously made archive file. This coupled 
+with the ability to auto duplicate jails makes a easy and simple task to 
+deploy a large number of jails quickly. Jailname and IP address are 
+mandatory parameters.
+.Pp
+During the creation process three administration files are created for 
+each jail. They are \fB/usr/local/etc/qjail.fstab/jailname\fR file,
+\fB/usr/local/etc/qjail.local/jailname\fR file, and the 
+\fB/usr/local/etc/qjail.global/jailname\fR file.  
+.Pp
+The options are as follows:
+.Bl -tag -width indent
+.It Fl z
+Code the same zone value used with the "install" subcommand to
+have this subcommand process against that zone.
+.It Fl n
+.hy 0
+This is the "network interface name" servicing the jails IP
+addresses. When qjail starts the jail it will automatically 
+create an alias for the jails IP address on that "network 
+interface name". When qjail stops the jail, it will automatically 
+remove the alias. If "-n value" is absent, the "route command" is 
+used to identify the default network interface device name which 
+is the device connected to the public internet and automatically 
+populate the "-n value". 
+.Pp
+For multiple static public routable IP addresses, the correct 
+"network interface name" to code is the name of the NIC facing 
+the public internet where these IP addresses enter your host. 
+For jails on the hosts private LAN, the correct "network 
+interface name" to code is the name of the NIC facing the hosts
+private LAN where those IP addresses exit and enter your host. 
+For jails assigned IP addresses reserved for private LAN use to 
+be able to access the public internet, you must configure your 
+firewall to perform NAT on them. See -4 option for more details.
+.Pp
+.hy 0
+Very important CAUTIONARY note: Be aware of the LAN IP address 
+range your DHCP server is dynamically assigning. Do not assign 
+those IP addresses to jails or your LAN users will instantly lose 
+their network access when the jail is started and its alias gets 
+created.
+.It Fl a
+.hy 0
+You can use an archive file as the template to create your new 
+jail from. If just the archived jailname is coded, then the most 
+current archive file matching that jailname will be used as the 
+source. The full archive file name can also be coded. Its prefixed 
+with the jailname and has the date & time the archive 
+was created appended as a suffix. Coding the full archive file 
+name is how you select an archive file other than the most current 
+one. This option is normally used to clone multiple jails 
+with the same status as the archived jail has. If the -a flag 
+is absent, the template is used. Note: The -a and -f options
+cannot be used together. By design jails created from a archive file 
+cannot be flavored. Use "ls /usr/jails/archive/" to list all archive 
+file names.  
+.Pp
+An archive of a image jail can be used to create a new directory 
+tree jail or a new image jail with a larger sized sparse file 
+image jail. An archive of a directory tree jail can be used to 
+create a new directory tree jail or a new image jail. The -n 
+interface nic name from the archive file is dropped. 
+.It Fl A
+.hy 0
+Using the \fB-A archive zone\fR option you can select an archive file 
+from a different zone as the template to create your new jail 
+from. The -A option is only valid when used together with the -a 
+option. Using a combination of the -z, -a and -A options allows 
+the selection of archive files from other zones. 
+.Pp
+The default jail environment \fBIE; no -z option coded on the qjail 
+install command\fR is a special case. Manipulation of the values in 
+-z, -a, and -A covers everything but selecting a jail archive 
+from the default jail environment. A special reserved value named
+\fBnozone\fR may be coded in the -A value to point to the default jail 
+environment archives. Normally the -z value is the zone the 
+create command applies to, the -A value is the zone where the 
+selected archive file is located, and the -a value is the archive 
+jailname or full archive file name in the zone pointed by the -A 
+value.   
+.It Fl f
+.hy 0
+Using the \fBflavor\fR option you can apply an qjail flavor to your new 
+jailname. If the -f flavor option is coded, the selected flavor 
+directory tree is merged into the new jail's directory tree. If 
+no flavor option is coded, the "default" flavor is merged into 
+the new jail's directory tree. Qjail has no function to delete 
+unwanted flavor directories. It's the users responsibility to 
+delete unwanted flavor's using the host's \fBrm -rf 
+/user/jails/flavor/name\fR command. Note: The -f and -a options 
+cannot be used together. By design jails created from a archive
+file cannot be flavored. 
+.Pp
+As part of the "install" subcommand, a flavor base directory was 
+created as \fB/usr/jails/flavors\fR and populated with two flavors, one 
+named \fBdefault\fR and the other named \fBssh-default\fR. Both of these 
+flavors contains 3 files customized for running in a jail 
+\fB(make.conf, periodic.conf, rc.conf).\fR In addition these customized 
+host files \fB/etc/resolv.conf and /etc/localtime\fR are copied to 
+default and ssh-default to facilitate jail usage. On inspection 
+you will see that these files are in their normal directory tree 
+locations. When customizing your own flavors you have to manually 
+create your own flavor directory tree populating it with your 
+customized files in their correct paths for merging into the new 
+jail.
+.Pp
+The \fBssh-default\fR flavor contains everything the \fBdefault\fR flavor 
+has, but in addition it has been customized to enable \fBssh\fR 
+support, and has a predefined standard user account named \fBqjail\fR 
+with a password of "qjail". Every jail you use this \fBssh-default\fR 
+flavor on will have this predefined standard user account \fBqjail\fR. 
+On first login the user will be prompted to enter a new password 
+to address basic security concerns. The qjail user belongs to the 
+"wheel" group so it has "su" access to "root".
+.Pp
+When creating your own flavor always copy the "default" flavor or 
+the "ssh-default" flavor as your starting base. 
+.It Fl c
+.hy 0
+This option will enable ssh and create a user account having the
+login ID and password of the jailname. To address basic security
+concerns, on first login the user will be prompted to enter a new
+password. The jailname user account belongs to the "wheel" group
+so it has "su" access to "root".
+.Pp
+When the jails created with the -c option are started for the 
+first time, the changes to configure ssh and create the user 
+account for that jail are applied. Doing a \fBqjail restart jailname\fR 
+or a \fBqjail stop jailname\fR followed by \fBqjail start jailname\fR is
+required to enable the changes which will be in effect from that 
+point on.
+.It Fl i
+.hy 0
+When coded means create a sparse file image type jail. When
+absent an directory tree type jail is created. When the -i option 
+is coded, it must be followed by a size value which is the
+allocation ceiling size of the sparse file. Only suffixes m|M for
+megabytes or g|G for gigabytes are valid entries. The sparse
+image file has a \fB.img\fR suffix and resides in the jailname
+directory as a single file. When the image jail is stopped the
+jailname.img file will be visible. Issuing \fBls -lh jailname.img\fR
+will show you the allocated size, issuing \fBdu -h jailname.img\fR
+will show you the amount of space used. If a image jail should consume
+all of its disk space allocation, you can increase it by
+following this procedure, archive it, delete it, and create it
+using the -a option, using the image archive as input with a
+larger -i value. A -i value of \fB10m\fR is the bare minimum size for a
+image jail.
+.It Fl d
+.hy 0
+Enter a numeric number representing the number of times you want
+this jailname duplicated. A suffix number starting at one and 
+incremented by one for each duplication is appended to each newly
+created jailname. Any number greater than 100 is invalid. A 
+single IPv4 address is required. For each repetition of the 
+duplication cycle the last octal of the IPv4 address increments 
+by 1.  
+.It Fl 4
+.hy 0
+This is either a public IPv4 address or a private IPv4 address. 
+More than a single IPv4 address can be assigned to a jail. 
+Multiple IPv4 addresses have to be a list of IP addresses 
+separated by a comma "," without spaces before or after.         \
+Example 10.0.0.2,10.0.0.3,10.0.0.4                               \
+A second format is also available "xl0|10.0.02,lo1|127.0.2.1"
+Note the surrounding "  " they are required. 
+.Pp
+According to RFC 1918, you can use the following IP address 
+ranges for private IPv4 networks which will never be connected to 
+the Internet. This is normally intended for Local Area Networks.
+              #
+              #       10.0.0.0        -   10.255.255.255
+              #       172.16.0.0      -   172.31.255.255
+              #       192.168.0.0     -   192.168.255.255
+              #
+.Pp
+.hy 0
+Static IP address (permanent, never changes) public Internet
+routable IP addresses are assigned to you by your ISP. If you
+purchased a continuous block of static public internet routable
+IP addresses, then each jail could be assigned one of those 
+individual IP addresses from that block.
+.Pp
+Normally cable providers and DSL providers assign dynamic IP 
+addresses. The assigned IP address may change when the lease time 
+expires or you reboot your system. 
+.It Fl 6
+.hy 0
+This is a IPv6 address that is to be assigned to the jail. More
+than a single IPv6 address can be assigned to a jail. Multiple 
+IPv6 addresses have to be a list of IP addresses separated by a 
+comma "," without spaces before or after. Both IPv4 and IPv6 
+addresses may be assigned to a jail by coding both the -4 and -6
+options. An single IPv4 address is required if the -d option is 
+coded to enable jail duplication.
+.It \fBjailname\fR
+.hy 0
+Only a single jailname is valid. The jailname can only contain
+alphanumeric, dash, and underscore characters, all numeric
+jailnames are invalid. To better manage large jail deployments a
+jail naming convention that groups jails by common function or
+user groups is advised. The maximum jailname size is 50
+characters. Jailnames have to be unique across all the zones.
+Just remember that you will be typing in this jailname or some
+prefix of it on all the subcommands you use, so try to keep the
+jailname short but meaningful.
+.Pp
+.hy 0
+Jails are started, stopped, and restarted in ascending alphabetical
+order, "a to z" based on the spelling of the jailname. If you want
+selected jails to start before other jails prefix those jailnames with
+numbers.
+.El
+.Sh qjail create examples
+.hy 0
+1.  qjail create -n rl0 -6 21:470:1f15:1ee7::102 webserver
+          This creates a single new directory tree type jail as 
+          /usr/jails/webserver from the template with a IPv6 address. 
+          The auto alias function is enabled.
+.Pp
+2.  qjail create -n rl0 -c -f myflavor -4 10.0.10.20 bld21a-floorA-cell01
+          This creates a single new directory tree type jail as 
+          /usr/jails/bld21a-floorA-cell01 from the template 
+          and copies the myflavor directory tree onto the 
+          bld21a-floorA-cell01 directory tree.
+          The auto alias function is enabled and ssh access is enabled.
+.Pp
+3.  qjail create -a cell-a -4 10.0.10.20,10.0.10.30 prison-B
+          This creates a single new directory tree type jail as 
+          /usr/jails/prison-B using the archive file named cell-a as 
+          the template directory tree for the new jailname. 
+          The auto alias default function is enabled.
+.Pp
+4.  qjail create -a cell-a -d 15 -4 10.0.10.20 room
+          This creates a new directory tree type jail using the archive 
+          file named cell-a as the template for the new jailname, and 
+          then duplicates it 15 times. 
+          Creating jailnames room-1 through room-15.
+          At the same time the last octet of the IP address
+          10.0.10.20 is incremented by one.
+          room-1 10.0.10.20  room-2 10.0.10.21  room-15 10.0.10.34
+          The auto alias default function is enabled
+.Pp
+5.  qjail create -n rl0 -d 15 -4 10.0.10.20 room
+          This creates a new directory tree type jail using the 
+          template directory tree for the new jailname, and then 
+          duplicates it 15 times creating jailnames
+          room-1 through room-15. The auto alias function is enabled
+          At the same time the last octet of the IP address
+          10.0.10.20 is incremented by one.
+          room-1 10.0.10.20  room-2 10.0.10.21  room-15 10.0.10.34
+.Pp
+6.  qjail create -n rl0 -d 15 -c -4 10.0.10.20 room
+          This does the same as the previous one except these jails 
+          also has ssh access enabled.
+.Pp
+7.  qjail create -i 100m -4 10.0.10.20 class
+          This creates a single new sparse image type jail using the 
+          template directory tree to populate the image with a 
+          maximum allocation size of 100 megabytes. 
+          The auto alias default function is enabled
+.Pp
+8.  qjail create -d 15 -c -i 100m -4 10.0.10.20 class
+          This does the same as the previous one except this jail
+          also has ssh access enabled, and duplicates it self
+          15 times creating jailnames class-1 through class-15.
+          At the same time the last octet of the IP address
+          10.0.10.20 is incremented by one giving.
+          class-1 10.0.10.21  class-2 10.0.10.22  class-15 10.0.10.34
+.Pp
+9.  qjail create -c -a cell-a -i 1g -4 10.0.10.20 room
+          This creates a new single sparse image type jail with a
+          maximum allocation size of 1 gigabyte, using the archive 
+          file named cell-a as the template directory tree for 
+          populating the image jail.  
+          The auto alias delault function is enabled and ssh access 
+          is enabled.
+.Pp  
+10. qjail create -z env1 -a cell-a -i 1G -4 10.0.10.20 room
+          This does the same as the previous one except this jail is 
+          being created in the "env1" zone.
+.Pp
+11. qjail create -z env1 -a cell-a -A env2 -4 10.0.10.20 room 
+          This creates a new jail named "room" in zone "env1" using a 
+          archive file named "cell-a" which is located in zone "env2".
+.Pp
+12. qjail create -z env1 -a cell-0 -A nozone -4 10.0.10.20 room
+          This creates a new jail named "room" in zone "env1" using a 
+          archive file named "cell-0" which is located in the qjail
+          default environment. The "nozone" keyword is used. 
+.Sh qjail list
+.hy 0
+Lists information about jails inside qjail's scope. They are shown in 
+ascending alphanumerically order, based on the spelling of the jailname.
+.Pp
+The list displays 5 columns of information. Starting from the left, 
+Column (1)                                                              \
+is the status flag consisting of 2 letters, the first letter can be a \fB(D)\fR 
+for Directory tree based jail, or \fB(I)\fR for a image file based jail, the 
+second letter can be a \fB(R)\fR meaning the jail is currently running, or a 
+\fB(S)\fR meaning the jail is stopped. An optional third letter \fB(N)\fR means the 
+jail is in norun status or \fB(M)\fR means the jail is in manual start status. 
+You use the \fBqjail config\fR subcommand -r option to enable and -R to disable 
+the norun setting. You use the \fBqjail config\fR subcommand -m option to 
+enable and -M to disable the manual start setting.                      \
+Column (2)                                                              \ 
+is the jail's jid (only available if the jail is started)               \ 
+Column (3)                                                              \
+is the network interface device name, this is the value entered on the 
+"create -n" option, or if a vnet jail the "config -w option.            \
+Column (4)                                                              \ 
+is the jails IP address or addresses, entered with the "create" command, 
+or if a vnet jail, it shows three fields separated by "|". The literal 
+"vnet" means this is a vnet jail, followed by "be or ng" indicating which 
+networking method used, and ending with "ipfw or none" indicating which 
+firewall is used inside of the vnet jail.                               \
+Column (5)                                                              \
+is the jails jailname.  
+.Bl -tag -width indent
+.It Fl z
+Code the same zone value used with the "install" subcommand to
+have this subcommand process against that zone. When this option
+is coded an addition heading "Jails in zone xxxx" displays right 
+above the normal heading. "xxxx" is the zone name.
+.It \fBjailname\fR
+If absent all the jails are listed. Multiple jailnames separated 
+by a space are allowed on the command. The group prefix option is 
+enabled. xxxx= will cause only those jailnames matching the xxxx 
+characters to be selected for processing. The equal sign "=" is 
+the wildcard symbol that signifies all the characters to its left
+are to be used to match on jailname to create a list of jailnames
+to be processed.
+.El
+.Sh qjail [start | stop | restart] jailname.....
+.hy 0
+When start, stop, or restart command is issued WITHOUT jailnames, all 
+the jails under qjail control are processed. When start, stop, or 
+restart command is issued WITH jailnames, only those jailnames are
+processed. A single line informational message is issued as each jailname
+is processed saying \fBStarted successfully jailname\fR or 
+\fBAlready running jailname\fR or \fBStopped successfully jailname\fR 
+or \fBAlready stopped jailname\fR or \fBBypassed norun status jailname\fR.
+.Pp
+Jails are started, stopped, and restarted in ascending alphabetical
+order, "a to z" based on the spelling of the jailname. If you want
+selected jails to start before other jails prefix those jailnames with
+numbers. All norun status jails are ignored.
+.Pp
+The function subcommands are as follows:
+.Pp
+  \fBstart\fR  Start all jails at once if jailname is absent.
+.Pp
+  \fBstop\fR   Stop all jails at once if jailname is absent.
+.Pp
+  \fBrestart\fR  Restart all jails at once if jailname is absent.
+.Pp
+The options are as follows:
+.Bl -tag -width indent
+.It Fl z
+Code the same zone value used with the "install" subcommand to
+have this subcommand process against that zone.
+.It \fBjailname\fR
+.hy 0
+If absent all the jails are used. Multiple jailnames separated 
+by a space are allowed on the command. The group prefix option is 
+enabled for these subcommands.  xxxx= will cause only those 
+jailnames matching the "xxxx" to be selected for processing. The 
+equal sign "=" is the wildcard symbol that signifies all the 
+characters to its left are to be used to match on jailname to 
+create a list of jailnames to be processed. Use the qjail "list" 
+subcommand to list all the jails under qjail's scope.
+.El
+.Sh qjail console
+.hy 0
+Attaches your \fBhost\fR console to the selected jail. You are logged in as 
+root by default. The command line prompt shows the name of the jail and 
+the path. Entering \fBexit\fR will terminate the console. You can 
+not activate the jails console if the jail is not currently running. This is
+intended for administration use only. Normally used to install ports or
+packages and do other system customization.   
+.Bl -tag -width indent
+.It Fl z
+Code the same zone value used with the "install" subcommand to
+have this subcommand process against that zone.
+.It Fl e
+If this is absent, the \fB/usr/bin/login -f root\fR command is executed 
+logging you in as root. A one time change to use the standard login prompt
+to enter the user id and password of some user account all ready
+created in the jail can be accomplished by using this 
+\fB-e /usr/bin/login\fR option on the "console" command. 
+.It \fBjailname\fR
+Jailname is a mandatory parameter. Only a single jailname is valid. Use 
+the subcommand list to display list of all jailnames.
+.El
+.Sh qjail archive
+.hy 0
+Creates a backup of one, or all jails. The specified jails directory tree
+is backed up as a tar file. The jails to be archived are required to 
+be in stopped mode before this "archive" command executes. The sharedfs 
+and the template can also be archived, but only when specified as the only
+jailname on the "archive" command. The archive file name is derived from 
+jailname, with the date and time of the archive appended to the file 
+name. The default archive directory is \fB/usr/jails/archive\fR.
+The jailnames to be deleted are required to be in stopped mode before
+this "archive" command executes.
+.Pp
+There is no qjail function to delete archive files. It's the users 
+responsibility to delete unwanted archives using the host's \fBrm\fR command.
+It's also the user responsibility to keep a log of archive file names 
+with a description of why the archive was created, so the correct 
+archive can be restored if desired.  
+.Bl -tag -width indent
+.It Fl z
+Code the same zone value used with the "install" subcommand to
+have this subcommand process against that zone.
+.It Fl s
+.hy 0
+This option makes a backup of the qjail internal definition and 
+control files to the archive directory as "system.bkup" plus the 
+qjail executable scripts to the archive directory as "pgm.bkup". 
+VIMAGE (virtualized network stack) is a highly experimental 
+feature that may cause the host system to freeze up and wipe out 
+the contents of any open files. Experience has shown that at 
+times this has happened to the qjail internal definition and 
+control files, and with less frequency to the qjail executable 
+scripts. If your going to be using vnet jails, it's highly 
+recommended you have a current backup.
+.It Fl A
+When used with no other parameters all jails are archived. Any other 
+parameter coded with -A is an syntax error.
+.It \fBjailname\fR
+.hy 0
+Multiple jailnames separated by a space are allowed on this 
+command. The group prefix option is enabled. xxxx= will cause 
+only those jailnames matching the xxxx character to be selected 
+for processing. The equal sign "=" is the wildcard symbol that 
+signifies all the characters to its left are to be used to match 
+on jailname to create a list of jailnames to be processed.
+Jailname is a mandatory parameter. Jails in "norun" status or
+"man" manual start status are also candidates for archiving.
+.Pp
+.hy 0
+If jailname is \fBsharedfs\fR or \fBtemplate\fR it will be 
+archived. A sharedfs containing only the minimum system install, 
+takes less than one minute elapse time to complete. A sharedfs 
+containing portsnap downloaded ports tree may take up to 7 minutes 
+elapse time to complete. Template and all other jails takes less 
+than 15 seconds elapse time to complete. Use the subcommand list 
+to display list of all jailnames. 
+.Pp
+Use qjail restore to restore an archive.
+.El
+.Sh qjail delete
+.hy 0
+Totally removes the jailnames directory \fB/usr/jails/jailname\fR, 
+and its entry in the three administration control files 
+\fB/usr/local/etc/qjail.fstab/jailname\fR 
+\fB/usr/local/etc/qjail.local/jailname\fR and 
+\fB/usr/local/etc/qjail.global/jailname\fR. 
+The jailnames to be deleted are required to be in stopped mode before 
+this "delete" command executes. 
+.Bl -tag -width indent
+.It Fl z
+Code the same zone value used with the "install" subcommand to
+have this subcommand process against that zone.
+.It Fl A
+This option will delete all the jails under qjail's control. You
+are advised to archive all your jails before doing this.
+.It \fBjailname\fR
+.hy 0
+Multiple jailnames separated by a space are allowed on this
+command. The group prefix option is enabled. xxxx= will cause 
+only those jailnames matching the xxxx character to be selected 
+for processing. The equal sign "=" is the wildcard symbol that 
+signifies all the characters to its left are to be used to match 
+on jailname to create a list of jailnames to be processed.
+Jailname is a mandatory parameter. Jails in "norun" status are 
+NOT excluded from being deleted.
+.El
+.Sh qjail restore
+.hy 0
+Creates new jails from archive files. The default archive directory is
+\fB/usr/jails/archive\fR. If a jail exists with the same jailname as the
+archive being restored, the restore is terminated. You have to delete the
+existing matching jailname before you can restore it. Archived jails 
+that have "norun" status or "manual start" status will be restored with 
+"norun" or "man" status intact. 
+.Bl -tag -width indent
+.It Fl z
+Code the same zone value used with the "install" subcommand to
+have this subcommand process against that zone.
+.It Fl s
+.hy 0
+This option restores the backup of the qjail internal definition 
+and control files from the archive "system.bkup" directory, plus 
+the qjail executable scripts from the archive "pgm.bkup" 
+directory. VIMAGE (virtualized network stack) is a highly 
+experimental feature that may cause the host system to freeze up 
+and wipe out the contents of any open files. Experience has shown
+that at times this has happened to the qjail internal definition 
+and control files, and with less frequency to the qjail 
+executable scripts. If your going to be using vnet jails, it's 
+highly recommended you have a current backup.
+.It \fBjailname\fR  
+.hy 0
+The most current archive file matching the jailname will 
+be restored. To restore an older file you have to specify the full 
+archive file name with the date and time of the archive appended
+to it. Multiple jailnames separated by a space are allowed on the
+command. The group prefix option is disabled for this subcommand.
+Jailname is a mandatory parameter. To view all the full archive 
+file names, use this command \fBls /usr/jails/archive/\fR.
+.Pp
+If jailname is \fBsharedfs\fR or \fBtemplate\fR and it's the only jailname on 
+the command, it will be restored. A sharedfs containing only the 
+minimum system install, takes less than one minute elapse time to 
+complete. A sharedfs with source and full ports tree may take up 
+to 7 minutes elapse time to complete. The existing sharedfs or 
+template will be renamed to previous.sharedfs and previous.template
+before restoring begins.  
+.El
+.Sh qjail config
+.hy 0
+Manage parameters of specific jails. The selected jailnames are 
+required to be in stopped mode before this command will process
+the jailname.
+.Pp
+The options are as follows:
+.Bl -tag -width indent
+.It Fl z
+Code the same zone value used with the "install" subcommand to
+have this subcommand process against that zone.
+.It Fl A
+This option is valid with all options except -i, -n and -d. When 
+coded, a jailname is invalid. This -A option means to set the 
+selected option on "ALL" the jailnames including those in "norun"
+and "man" status.
+.It Fl b
+.hy 0
+Lower case b populates the devfs_ruleset per-jail option with the
+rule number representing the custom ruleset you added to the
+host's /etc/devfs_rules file. If this -b rule# is omitted the
+default ruleset number 4 is used and in most cases is sufficient.
+.Pp
+To create your custom devfs_ruleset always copy rule number 4 
+from the hosts /etc/defaults/devfs_ruleset and create a host's
+/etc/devfs_ruleset renaming number 4 to a unused number of your
+choice. Never grant access to raw disk devices inside of a jail,
+this may permit processes to exit the jail container and modify
+files outside of the jail. Type man devfs for information on how
+to create devfs rulesets to limit access and expose only
+appropriate device nodes to a jail.
+.Pp
+Example; If a jail were to run OpenVPN in a jail it requires 
+access to the "tun" device which rule number 4 does not include.
+This is when a customized ruleset would be called for. 
+.It Fl B
+Upper case B disables the devfs_ruleset per-jail option and 
+reverts the jail to the default #4 devfs_ruleset for jails.
+.It Fl c
+.hy 0
+The new network interface device name you want to replace the
+selected jailname "NIC" network interface device name with.
+Coded -c NIC jailname.
+.It Fl d
+Display's the jails internal definition record from 
+"/usr/local/etc/qjail.local/jailname" which shows the values set 
+for the jail. Coded "-d jailname"
+.It Fl f
+.hy 0
+Set the FIB (routing table) to use when running commands from 
+inside the jail. This is a very advanced function used under very 
+special conditions. Coded "-f numeric value" to identify which 
+routing table the jail is to use.
+.Pp 
+First you need to increase the number of host routing tables by 
+compiling the kernel with "option ROUTETABLES=3" or use the 
+net.fibs=3 option in /boot/loader.config. The result would be    \
+0 = default host routing table,                                  \
+1 = first additional routing table,                              \
+2 = second additional routing table.                             \
+Then issue host console command;                               \ 
+\fBsetfib 1 route add default "That jails default route ip address"\fR            \
+Where 1 repersents the first additional routing table.           \
+This route table will remain in effect until the next boot. 
+Adding that command to /etc/rc.conf would make it happen on every
+boot of the host system.
+.Pp
+Then use -f option with value of 1 to assign that routing table
+to the selected jail. See setfib(8) for more details.
+.It Fl h
+.hy 0
+This option will enable ssh and create a user account having the 
+login ID and password of the jailname. To address basic security 
+concerns, on first login the user will be prompted to enter a new 
+password. The jailname user account belongs to the "wheel" group
+so it has "su" access to "root".
+.Pp
+When the jails modified with the -h option are started for the
+first time, the changes to configure ssh and create the user
+account for that jail are applied. Doing a \fBqjail restart jailname\fR
+or a \fBqjail stop jailname\fR followed by \fBqjail start jailname\fR is
+required to enable the changes which will be in effect from that
+point on.
+.It Fl 4
+.hy 0
+The new IPv4 addresses you want to replace the selected jailname 
+IPv4 address with. More than a single IPv4 address can be 
+assigned to a jail. Multiple IPv4 addresses have to be a list of 
+IPv4 addresses separated by a comma "," without spaces before or 
+after. Example 10.0.0.2,10.0.0.3,10.0.0.4                       \
+Coded "-4 new-IPv4 jailname" 
+.It Fl 6
+The new IPv6 addresses you want to replace the selected jailname 
+IPv6 address with. More than a single IPv6 address can be 
+assigned to a jail. Multiple IPv6 addresses have to be a list of
+IPv6 addresses separated by a comma "," without spaces before or 
+after. Coded "-6 new-IPv6 jailname" 
+.It Fl k
+.hy 0
+\fBThis negates the security of the jail concept and should never be 
+used on a jail accessible from the public internet.\fR Lower case 
+"k" enables the allow.raw_sockets per-jail option. Normally the ping 
+command will get "Operation not permitted" error when issued 
+from inside of a jail. This is a security design default of the 
+jail environment. This security feature does not allow users or 
+jail applications to create raw sockets. With raw sockets enabled 
+a jail user could use perl or python or some other port utilities 
+to create raw sockets and launch attacks on the host or the 
+public network. If the jail has public internet access, an public 
+attacker may compromise the jail and launch attacks on the host 
+or the public network. Consideration of the security risk verses 
+the convenience of using the ping command from inside of the jail 
+is in order. However this restriction may be nullified by coding 
+this option. Recommend using dig or whois commands to verify 
+public access.
+.Pp
+There are some valid situations for enableing allow.raw_sockets
+for an individual jail, such as running mysql or php or PostgreSQL
+which require local unix sockets to work. 
+.It Fl K
+Upper case K disables the allow.raw_sockets per-jail option.
+.It Fl l
+.hy 0
+Lower case l enables the allow.mount.nullfs per-jail option.
+This is restricted to nullfs mounts on directories inside of the 
+jail. It has nothing to do with mounting nullfs from the host to 
+the jail filesystem which is always available to do. Any 
+mount_nullfs commands issued from within the jail are only in 
+effect for the duration the jail is running. When the jail is 
+stopped the established nullfs mount is neutralized.           \
+The exec.prestart or exec.poststart parameters may be used to
+automate the issuing of the desired mount_nullfs commands.     \
+Documented in jail(8).
+.It Fl L
+Upper case L disables the allow.mount.nullfs per-jail option.
+.It Fl m
+Means put this jail in "manual start" status.                    \
+If qjail_enable="YES" is present in the "host's" /etc/rc.conf 
+file, then all jails in "man" status will be bypassed when the
+host is booted or powered up.
+.It Fl M
+Upper case M disables the "man" status.
+.It Fl n
+.hy 0
+The new jailname you want to replace the selected jailname with. 
+This changes the jailname and the jails directory name that the 
+jail is known by. Coded "-n new-jail-name current-jail-name".
+The new jail name can only have alphanumeric, dash, and 
+underscore characters and all numeric jail names are invalid.
+.It Fl p
+.hy 0
+Enables the cpuset.id per-jail option. Valid values are numeric
+numbers 0-9. A value of "null" will disable this option. This 
+option is used to limit the number of CPUs the jail may use of 
+the total CPUs available on the computer. 
+.Pp
+Issuing "cpuset -g" command on the host will list the CPU 
+identification number of each available CPU. Assigning a jail to
+an single CPU does not give that jail exclusive usage of that CPU 
+nor does it exclude other host processes from using that CPU. If 
+"cpuset -g" listed 0, 1, 2, 3, 4, 5, 6, 7, that means this
+computer has 8 CPUs. Coding -p 0,1,2 means CPU 0, 1, and 2 out of 
+the 8 available CPUs are being assigned to this jail restricting 
+that jail from using CPUs 3, 4, 5, 6, and 7. 
+.Pp
+See the rctl(8) command for true resource control. Also this 
+wiki article, it does a good job explaining what the rctl 
+command does and how it works.
+https://wiki.freebsd.org/Hierarchical_Resource_Limits .
+Documented in jail(8).
+.It Fl q
+Lower case q enables the allow.quotas per-jail option. Quota has 
+to be compiled into the host's system kernel first for this 
+option to function. "option QUOTA" is the statement you have to 
+add to your kernel definition source. Documented in jail(8). 
+.It Fl Q
+Upper case Q disables the allow.quotas per-jail option.
+.It Fl r
+Means put this jail in "norun" status.                          \
+If qjail_enable="YES" is present in the "host's" /etc/rc.conf
+file, then all jails in "norun" status will be bypassed when the
+system is booted and also when the start command is used. 
+.It Fl R
+Upper case R disables the "norun" status.
+.It Fl s
+Enables the securelevel per-jail option. Documented in jail(8).
+There are five different security levels. Any super-user process 
+can raise the level, but no process can lower it.               \
+The security levels are:
+.Pp
+.hy 0
+ -1    Permanently insecure mode - always run the system in 
+       insecure mode. This is the default initial value.
+.Pp
+ 0     Insecure mode - immutable and append-only flags may be 
+       turned off. All devices may be read or written subject 
+       to their permissions.
+.Pp
+ 1     Secure mode - the system immutable and system append-only 
+       flags may not be turned off; disks for mounted file 
+       systems, /dev/mem and /dev/kmem may not be opened for 
+       writing.
+.Pp
+ 2     Highly secure mode - same as secure mode, plus disks may 
+       not be opened for writing (except by mount(2)) whether 
+       mounted or not. This level precludes tampering with file 
+       systems by un-mounting them, but also inhibits running 
+       newfs(8) while the system is in multiuser. In addition, 
+       kernel time changes are restricted to less than or equal 
+       to one second. Attempts to change the time by more than 
+       this will log the message "Time adjustment clamped to 
+       +1 second".
+.Pp
+ 3     Network secure mode - same as highly secure mode, plus IP 
+       packet filter rules (see ipfw(8), ipfirewall(4) and 
+       pfctl(8) cannot be changed and dummynet(4) or pf(4) 
+       configuration cannot be adjusted. 
+.Pp
+This does not really apply to the qjail jail system because all
+of the system executables are in an read only nullfs mounted
+filesystem which makes it impossible to change file content or
+add files to those directories. This is by far a stronger
+form of jail security than the securelevel parameter can provide 
+on an per-jail basis.
+.It Fl v
+.hy 0
+Lower case v enables the vnet [vimage] per-jail option.            \
+\fB WARNING: The 10.0-RELEASE version of VIMAGE (virtualized network 
+stack) is a highly experimental feature and is not reliable.\fR 
+Information given here maybe different in newer RELEASES. Vimage 
+has to be compiled into the host's kernel before the vnet 
+function will work. "option VIMAGE" is the statement you have to 
+add to your kernel definition source.     
+.Pp
+A file is created in \fB"/usr/local/etc/qjail.vnet"\fR for each 
+jailname, containing the jail(8) definition statements for that 
+vnet jail. The user may modify the jails definition statements if 
+needed, including cloning or modifying the network setup scripts 
+"/usr/local/bin/qjail.vnet.be & "/usr/local/bin/qjail.vnet.ng". 
+These scripts are "templates" that are guaranteed NOT to work 
+with your host's ip addressing scheme or NAT configuration. You
+will have to modify the one for the method you select to 
+incorporate your host's ip addressing scheme and/or NAT 
+configuration into the scripts assignment of the vnet ip address.     
+.Pp
+When you stop a vnet/vimage jail, you get error messages about 
+lost memory pages that only a reboot will recover. See PR # 
+164763 for details. This sounds worse than it really is. Testing
+has shown that 1000 start/stop cycles resulted in only 30 MEG of 
+lost memory. It's up to you to decide if this is a "show stopper" 
+against using vnet/vimage jails.
+.Pp
+Of the three firewall solutions provided in the base system, only 
+IPFW firewall can run on the host and inside the vnet jail at the 
+same time. IPFW kernel statements "options IPFIREWALL" &       \ 
+"options IPFIREWALL_DEFAULT_TO_ACCEPT" have to be included with   
+"option VIMAGE" when compiling your kernel for IPFW to function 
+inside of a vnet jail. IPFW dummynet and in kernel NAT cause 
+system freezes at boot time. The vnet jail IPFW logging       
+intermingles it's log records with the host's IPFW logging     
+records in the hosts /var/log/security file.                   \
+IPFILTER page faults on boot.                                  \ 
+PF firewall runs on the host but will not start in a vnet jail.
+.Pp
+Configuring and controlling the starting and stopping of the vnet 
+jail is simple. The really hard part is creating the network 
+access for the vnet jail to exchange traffic with a LAN or the 
+public internet. There are two methods available to accomplish 
+this; the if_bridge/epair method and the netgraph method. The 
+netgraph method is far more versatile, but requires the user to 
+have a advanced knowledge of networking. The if_bridge/epair 
+method is far more simpler and more than adequate for normal 
+usage requirements. It's the recommended method to use. The 
+ifconfig vnet command places a size limit of 12 characters on the 
+vnet jail name size. Scripts are provided for both methods that 
+users may modify for their unique requirements. \fBWarning: What ever 
+method you select to use has to be used for all your vnet jails. 
+Mixing methods is guaranteed to freeze the host system.\fR
+.Pp
+Because of the increased likely hood of host system freezes or 
+page faults vnet jails are restricted to directory type 
+filesystem jails only. No image jail type allowed because of the 
+manually effort required to recover them. Experience has shown 
+that at times a vnet system freeze may cause the contents of any 
+open files to be wiped out leaving only the file name. This 
+effects the qjail internal definition and control files, and with 
+less frequency the qjail executable network scripts. It's highly 
+recommended you use the "archive -s" option to create a current 
+backup of these files. Using the "restore -s" option will restore 
+those files after a vnet system freeze greatly simplifying the 
+recovery process.
+.It Fl V
+Upper case V disables the vnet [vimage] per-jail option.
+.It Fl w
+.hy 0
+Enables the vnet.interface per-jail option. Populate with the 
+network interface device name of the NIC facing the public 
+internet or facing the LAN server you want vnet [vimage] to 
+exchange traffic with.     
+.It Fl W
+Upper case W disables the vnet.interface per-jail option.
+.It Fl x
+.hy 0
+Lower case x enables the allow.mount.zfs per-jail option. This 
+option has mandatory host requirements before it's useful. The 
+host must have all or some part of it's hard drive space defined 
+to zfs and actively using it. See zfs(8) for information on how 
+to configure the zfs filesystem to operate from inside a jail. 
+The exec.prestart or exec.poststart parameters may be used to 
+automate the issuing of the desired zfs commands.               \
+Documented in jail(8).
+.It Fl X
+Upper case X disables the allow.mount.zfs per-jail option.
+.It Fl y
+.hy 0
+Lower case y enables the allow.sysvipc per-jail option.
+Grant processes within the jail access to System V IPC (semaphores).
+Enabling sysvipc makes the jail considerably less secure in respect 
+to shared memory. This feature should not be used unless absolutely 
+necessary when no other option is available. Documented in ipcs(1).
+.Pp
+Example: Zabbix (a system monitoring tool) which is the major 
+competitor of naigos would need allow.sysvipc enabled so it will 
+start.
+.It Fl Y
+Upper case Y disables the allow.sysvipc per-jail option.
+.It \fBjailname\fR
+.hy 0
+For all options except -d, -i, and -n, multiple jailnames 
+separated by a space are allowed on the command. The group prefix 
+option is enabled. xxxx= will cause only those jailnames matching 
+the xxxx characters to be selected for processing. The equal sign 
+"=" is the wildcard symbol that signifies all the characters to 
+its left are to be used to match on jailname to create a list of 
+jailnames to be processed. Jailname is a mandatory parameter. Use 
+subcommand "list" to show a list of all jailnames.
+.El
+.Sh qjail update
+.hy 0
+Provides the ability to add or update the ports collection on sharedfs, 
+and a method for synchronizing the host's system binaries and those of 
+the \fBsharedfs\fR.
+.Bl -tag -width indent
+.It Fl z
+Code the same zone value used with the "install" subcommand to
+have this subcommand process against that zone.
+.It Fl b
+.hy 0
+The basic requirement of FreeBSD jails is the jail environment
+and the host run the same version of the systems binaries. Since
+the FreeBSD-update utility only inspects the host system to
+determine the systems RELEASE level it's not applicable in a
+jailed environment. Performing a make buildworld/installworld on
+sharedfs's source is such a waste of effort and resources after
+having done this already for the host system. This option makes
+the buildworld/installworld obsolete for the qjail environment.
+.Pp
+This option deletes all the system binaries from the sharedfs and
+them copies the host's system binaries to sharedfs. It's intended
+to be used after running the FreeBSD-update utility on the host
+to apply security updates or to upgrade the GENERIC host from one
+RELEASE to another newer RELEASE, or after performing a make 
+buildworld/installworld on the host updating its system binaries. 
+Basically update the host and copy your work to the sharedfs 
+getting both environments synchronized. 
+.Pp
+Note: When going from one subversion to a newer subversion within 
+the same major RELEASE, IE: 8.0 to 8.1 there is no need to update 
+your installed ports/packages. When going to a newer major RELEASE
+IE; 8.1 to 9.0 then your installed ports/packages need updateing.
+.It Fl p
+.hy 0
+This option Invokes the portsnap utility to fetch and extract a 
+FreeBSD ports tree from "portsnap.FreeBSD.org" (475MB). By design 
+the "sharedfs" filesystem includes the "usr/ports" directory 
+which is not automatically populated by "qjail install".
+.Pp
+An alternative to executing portsnap to populate 
+"sharedfs/usr/ports" would be to temporarily make the hosts 
+"/usr/ports" directory tree available to the jails by using the 
+"mv" command like this:                                                  \
+\fBmv /usr/ports /usr/jails/sharedfs/usr\fR and returned doing                 \
+\fBmv /usr/jails/sharedfs/usr/ports /usr\fR
+.Pp
+Portsnap will initially download a compressed file containing the 
+complete ports tree. Elapse download time greater than 15 minutes
+is normal. On its initial execution, an extract is performed
+creating the /usr/ports sub-directories and populating them. 
+Subsequent executions, the /usr/ports directory exists, so an 
+update is done populating the /usr/ports directory tree with only
+things that have been changed or added. This is portsnap's 
+default behavior. This behavior can be somewhat modified by 
+changing the content of the \fB/usr/local/etc/qjail.portsnap.conf\fR 
+file. Add \fBREFUSE\fR statements to select the ports categories you 
+don't want populated to your /usr/ports directory tree. Ideal 
+candidates to REFUSE are the non-English languages, astro, 
+biology, cad, finance, games, math, mbone, and science. From 
+there you can select additional categories to REFUSE based on 
+your normal jail port usage. For more details see Appendix 
+A.6-Using Portsnap and Chapter 24.3 Portsnap in the FreeBSD 
+Handbook or "man portsnap".
+.It Fl P
+.hy 0
+This is an upper case P. This option copies the hosts \fB/usr/ports\fR
+directory tree to the \fB/usr/jails/sharedfs/usr/ports\fR directory 
+tree after first deleting the existing one.
+.It Fl S
+.hy 0
+This is an upper case S. This option copies the hosts \fB/usr/src\fR
+directory tree to the \fB/usr/jails/sharedfs/usr/src\fR directory tree 
+after first deleting the existing one.
+.It Fl l
+.hy 0
+This enables or disables [on | off] logging of all qjail commands 
+and error messages to /var/log/qjail.log file. Each log entry is 
+prefixed with a date/time stamp and the user account name of the 
+user entering the commands. An entry is also made in 
+/etc/newsyslog.conf to auto rotate the qjail.log file.
+.El
+.Sh qjail logmsg
+.hy 0
+This subcommand will post what every follows the subcommand as a textual 
+comment to the qjail system log. Offers the user the opportunity to place 
+their own documentation into the log about what or why their doing 
+things. Totally free form. 
+.Sh qjail help
+.hy 0
+The "help" function displays the syntax of all the subcommands.
+.Bl -tag -width indent
+.It \fBmanual\fR
+This Launches the man 8 qjail command to display the full manual.
+.El
+.Sh GENERAL QJAIL USAGE TIPS
+.hy 0
+.Pp            
+*   Qjail must be run by a superuser login account such as "root" 
+    or a normal user login account belonging to the "wheel" group.
+    For user accounts in the wheel group, after logging in they have
+    to issue the "su" command and reply with the root password to
+    gain the superuser access required by qjail. The "sudo" port
+    can be used instead of "su" to perform the same function 
+    if so desired.
+.Pp            
+*   The orderly stopping of jails that have databases or other 
+    applications that may have delayed buffered writes to files is
+    accomplished by the use of the "qjail stop" command or issuing 
+    the "shutdown now" command. The halt and reboot commands or pressing
+    the computers reset or power on buttons results in the running jails
+    being instantly terminated which some applications can not tolerate.
+    Always use the shutdown command.  
+.Pp            
+*   By design the "sharedfs" filesystem includes the "usr/ports" and 
+    "usr/src" directories which are not automatically populated by 
+    "qjail install". You can temporarily make the hosts "/usr/ports" 
+    or "/usr/src" directory trees available to the jails by using the
+    "mv" command like this:                                           
+    \fBmv /usr/ports /usr/jails/sharedfs/usr\fR and returned doing
+    \fBmv /usr/jails/sharedfs/usr/ports /usr\fR
+.Pp            
+*   In environments where you want all the jails to use the same set 
+    of ports but don't want to have to compile these ports in every jail,
+    you can do the following. Populate sharedfs/usr/ports/packages/ 
+    directory with the packages you want. All jails have access to this
+    shared directory. Then create a SEED jail to be used as the source 
+    to clone all of the other jails from. First create your basic SEED 
+    jail using the template. You may wish to customize a flavor 
+    to contain any desired /etc config files unique to that seed.
+    Additionally you can start the SEED jails console and perform any
+    other customization such as "pkg install" for the pre-staged 
+    packages or "make install" on ports you want. When your satisfied 
+    with the SEED jail's configuration, archive it. Then use the SEED's
+    archive file jailname in the -a option of the create subcommand so
+    it's used as the source template to create the other jails from.
+    Optionally you could use the -d and or -I options with the -a 
+    option for mass duplication of jails based on that SEED 
+    configuration.  
+.Pp            
+*   In the situation where you want "all" the jails that you EVER create
+    to have the same selection of ports, create a "SEED" jail as 
+    described above. When your satisfied with your "SEED" jail, delete 
+    the /usr/jails/template directory and rename your "SEED" jail to 
+    /usr/jails/template directory.                               
+    \fBmv /usr/jails/SEED /usr/jails/template\fR
+    \fBrm /usr/local/etc/qjail.local/SEED\fR
+    \fBrm /usr/local/etc/qjail.global/SEED\fR
+    \fBrm /usr/local/etc/qjail.fstab/SEED\fR
+    From that point on, all new jails created using the template
+    will contain your standard ports.
+.Pp            
+*   The /etc/rc.conf in the default flavor has this statement;
+    \fBcron_flags="$cron_flags -J 60"\fR this enables time jitter
+    for all /etc/crontab jobs run by the superuser, which on a 
+    pristine jail environment is everything in the crontab file.
+    Time jitter works this way: Prior to executing commands in the
+    /etc/crontab file, cron will sleep a random number of seconds
+    in the range from 1 to 60 seconds. This option greatly helps 
+    to reduce host system load spikes during moments when a 
+    lot of cron jobs are likely to start at once, IE, at the 
+    beginning of the first minute of each hour. Without this 
+    statement in every deployed jail to randomly spread the 
+    starting of cron tasks over the first minute, most likely
+    the host system would come to a darn near halt. The default
+    flavor has another customized configuration file just for
+    jails. The /etc/periodic.conf overrides the normal emailing 
+    of reports and instead creates daily, weekly, and monthly 
+    logs within each jails /var/log directory. These logs get 
+    rotated and deleted as specified in the jails 
+    /etc/newsyslog.conf.   
+.Pp            
+*   Its a mandatory requirement of the FreeBSD "jail" system that the
+    host and the jails are both running the same version of the operating
+    system binaries. First you have to get your host system running at 
+    the newer RELEASE version. You can do the fresh install from scratch
+    method, or update your host's current RELEASE version by using the 
+    Freebsd-update utility or svn update your system source and make 
+    buildworld/installworld. After the host is running the new RELEASE 
+    version and before starting any qjail's. You can run the "install" 
+    subcommand again and re-install with the newer RELEASE version
+    matching what is on the host, without disturbing the existing 
+    installed jails, or run the "update" subcommand with the -b option 
+    to copy the hosts operating system binaries to the sharedfs.
+    If going to a newer major RELEASE, IE: 6.4 to 7.1; 7.2 to 8.0;
+    then remember, all existing jails that have ports or packages in 
+    them will need them updated to versions compatible with the new 
+    major RELEASE version. On the other hand, if going from a 
+    subversion to a newer subversion within the same major RELEASE, 
+    IE: 7.1 to 7.2; 8.0 to 8.1, then there is no need to update your
+    installed ports/packages.
+.Pp            
+*   Each jail has a console log located in the host's /var/log/
+    directory named jail_*_console.log. Where "*" = jailname.
+    These logs don't grow much but if the jails are going to be 
+    used long term, their names should be added to the hosts
+    /etc/newsyslog.conf so they get auto rotated and deleted.
+    You don't want some jail user to cause console messages and
+    flood the jails log until all the host's disk space is 
+    consumed bring the host to a abrupt stop. 
+.Pp            
+*   If you have qjail start a image jail, then the contents of its 
+    sparse image file are accessible by the host system. From the host 
+    you can "cd" into the image jails jailname directory and access 
+    the directory tree there just like any other directory tree.
+.Pp            
+*   The ping command will get "Operation not permitted." error when 
+    issued from inside of a jail. This is not a qjail restriction, but 
+    a design default of the FreeBSD jail command. This default does not
+    allow users or jail applications to create raw sockets. This is a 
+    security feature. With raw sockets a jail user could use perl or
+    python or some other port utilities to create raw sockets and launch
+    attacks on the host or the public network. The config -k option 
+    maybe used to enable allow.raw_sockets function on a per-jail basis. 
+.Pp            
+*   Once your jail has public network access, (test with whois or dig) 
+    then all your normal application install functions are available,
+    (ports tree update, svn update, ports and package installs) right 
+    from the jails console or through ssh if that option was selected 
+    during the jail create process.
+.Pp            
+*   Jails in their current form (RELEASE-9.0) do not have a network stack
+    of their own, so they can't have a firewall. The host's firewall and
+    network is in control.  
+.Pp            
+*   If you want absolute control over starting your Jails. (IE. no boot 
+    time auto-start of the jails), then don't put the qjail_enable="YES"
+    statement in the hosts rc.conf file.
+.Pp            
+*   If for whatever reason you want to completely delete the qjail
+    jail environment so you can start over with the install
+    subcommand from scratch, execute these commands;
+     \fBrm -rf /usr/jails\fR
+     \fBrm -rf /usr/local/etc/qjail.local\fR
+     \fBrm -rf /usr/local/etc/qjail.global\fR
+     \fBrm -rf /usr/local/etc/qjail.fstab\fR
+     \fBrm /var/log/jail_*\fR
+     \fBrm /var/log/jails.lo*\fR
+.Sh FILES
+/usr/local/bin/qjail            The main work horse       
+.br
+/usr/local/etc/rc.d/qjail.bootime  Boot time jail starter 
+.br
+/usr/local/etc/qjail.local/*    jail definition files for no zones
+.br
+/usr/local/etc/qjail.global/*   jail definition files for all zones
+.br
+/usr/local/etc/qjail.fstab/*    sharedfs null mount record for each jail
+.br
+/var/run/jail_*.pid             Run pid record for each started jail
+.br
+/var/log/jail_*_console.log      * = jailname
+.br
+/usr/local/share/examples/qjail  Example flavors
+.br
+/usr/jails                       Location of qjail's jails
+.br
+/usr/jails/archive               Location of qjail's archives
+.br
+/usr/jails/flavors               Location of qjail's flavors
+.br
+/var/log/jails.log               Location of qjail's system log file
+.Sh "SEE ALSO"
+qjail-intro(8), qjail-howto(8), jail(8), mount_nullfs(8), 
+.br
+mdconfig(8), devfs(5), portsnap(8) freebsd-update(8)
+.Sh AUTHOR
+ezjail version 3.1 which qjail was forked from was written by           
+.br
+Dirk Engling <erdgeist@erdgeist.org>                                    
+.br
+http://erdgeist.org/arts/software/ezjail/                               
+.Pp
+qjail versions 1.0 through 2.2 written by                               
+.br
+The Qjail project team, Angeles City, Philippines                       
+.br
+Joe Barbish <qjail@a1poweruser.com> for the Qjail project team.
+.Pp
+qjail version 3.0 and newer written by                                    
+.br
+Joe Barbish <qjail@a1poweruser.com>                                     
+.br
+http://qjail.sourceforge.net/                                           
